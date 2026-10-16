@@ -471,9 +471,10 @@ The six SE/V2 AHB windows are on 135i too. Panorama adds
 |-----------|---------|----------|------|---------|
 | Shading lines | 128 (driver) | 128 | unknown | inconclusive |
 | Shading DPISET | 1200 native (driver) | 1200 native | unknown | inconclusive |
-| AFE offset target | `0x1000` (driver) | `0x1000` | unknown | inconclusive |
-| AFE gain target | `0xD000` (driver) | `0xD000` | unknown | inconclusive |
-| Session-04 colour AFE gains (R,G,B) | unknown (not extracted here) | `0x14`, `0x1F`, `0x17` | unknown | inconclusive |
+| AFE gain fields (`0x02`-`0x04`) | 6-bit PGA (driver) | 6-bit PGA, wraps at `0x40` (probed) | unknown | inconclusive |
+| AFE offset fields (`0x05`-`0x07`) | 9-bit sign-magnitude (driver) | 9-bit sign-magnitude, bit 8 = minus (probed) | unknown | inconclusive |
+| AFE white target (offset search) | adaptive, `0x3000` when bright (driver) | same | unknown | inconclusive |
+| Session-04 colour AFE offsets (R,G,B) | unknown (not extracted here) | `0x14`, `0x1F`, `0x17` | unknown | inconclusive |
 | Shading blob destination | `0x10014000` | `0x10014000` | upload seen | same |
 | IR LED `0x37` bit 2 on IR pass | N/A (no IR) | set (`0xB0` → `0xB4` in session 05) | unknown | different |
 | `0x37` at boot / colour image | `0xC0` | `0xC0` | `0x21` at boot | different |

@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **GL128 AFE field probe** (`tools/probe_afe_fields.py`): stationary lab tool (carriage at home, motor off, calibration cache untouched) that sweeps FE indices (default `0x02` and `0x05`, any of `0x02`–`0x07` via `--fields`) with the lamp on and off and reports whether each behaves as a gain (AD9826 / 6-bit wrap at `0x40`) or an offset. `--layout planar|chunky` overrides the strip decode. Writes a CSV under `tools/scanlab/runs/afe-probe/`.
+
+### Fixed
+
+- **GL128 AFE calibration** (8200i SE, 8100 V2, 8300i SE): the analog frontend follows the AD9826 layout. FE indices `0x02`–`0x04` are 6-bit PGA gains and `0x05`–`0x07` are 9-bit sign-magnitude offsets, probed on the 8200i SE. The driver had the two named the other way round. Fixes on top of the rename:
+  - AFE strips are now always decoded as chunky RGB. The lag test often picked planar, which blended all three channels, so the search could not balance them independently.
+  - The offset search stays within `0`–`+255`. It used to step into codes `0x100` and up (negative offsets), where the strip gets darker as the code rises, so it ran away to the top and hit the "pegged at max" fallback.
+  - PGA gains are capped at `0x3F`. The infrared gain search used to run to `0xFF`, crossing the 6-bit wrap three times.
+
+### Changed
+
+- **Calibration cache v10**: GL128 entries saved under the old swapped AFE names are dropped, so the first scan after upgrading recalibrates once.
+
+### Notes for integrators
+
+- `AfeFrontend.gains` / `.offsets` and the cache's `afe_gains` / `afe_offsets` now mean the same registers on GL128 as on GL845: gains are `0x02`–`0x04` and offsets are `0x05`–`0x07`. `FE_GAIN_*` / `FE_OFFSET_*`, `coarse_gains_from_wide_means`, `adaptive_afe_white_target`, `AFE_OFFSET_MIN`, `COLOR_AFE_SESSION04_OFFSETS` and `AFE_WHITE_TARGET_*` replace the old names. `encode_afe_offset` / `decode_afe_offset` convert signed offsets to and from the FE code. `AFE_GAIN_MAX` (and the `AfeSearchConfig.gain_max` default) is now `0x3F`, which also applies to GL845's forced dichotomy.
+
 ## [1.3.6] - 2026-10-14
 
 ### Fixed

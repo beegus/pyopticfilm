@@ -705,8 +705,10 @@ REGISTERS: tuple[RegisterEntry, ...] = (
             "0x00-0x07 reached indirectly through REG_FE_INDEX/0x51, a "
             "different address space entirely, not raw ASIC register "
             "addresses) — its docstring already documents indices 0x02-0x04 "
-            "as per-channel offsets and 0x05-0x07 as per-channel gains, so "
-            "it isn't blind the way this span is."
+            "as per-channel 6-bit PGA gains and 0x05-0x07 as per-channel "
+            "9-bit sign-magnitude offsets (AD9826 layout, confirmed on the "
+            "8200i SE with tools/probe_afe_fields.py), so it isn't blind the "
+            "way this span is."
         ),
         confidence=Confidence.UNKNOWN,
         citations=_c(

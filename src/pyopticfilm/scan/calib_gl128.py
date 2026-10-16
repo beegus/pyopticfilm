@@ -15,15 +15,17 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 #: Analog frontend register indices (GL124 ``0x51`` / ``0x5d`` / ``0x5e`` path).
-FE_OFFSET_R = 0x02
-FE_OFFSET_G = 0x03
-FE_OFFSET_B = 0x04
-FE_GAIN_R = 0x05
-FE_GAIN_G = 0x06
-FE_GAIN_B = 0x07
+#: AD9826 layout, hardware-probed on the 8200i SE: ``0x02``-``0x04`` are 6-bit
+#: PGA gains, ``0x05``-``0x07`` are 9-bit sign-magnitude offsets (bit 8 = minus).
+FE_GAIN_R = 0x02
+FE_GAIN_G = 0x03
+FE_GAIN_B = 0x04
+FE_OFFSET_R = 0x05
+FE_OFFSET_G = 0x06
+FE_OFFSET_B = 0x07
 
-FE_OFFSET_INDICES: tuple[int, int, int] = (FE_OFFSET_R, FE_OFFSET_G, FE_OFFSET_B)
 FE_GAIN_INDICES: tuple[int, int, int] = (FE_GAIN_R, FE_GAIN_G, FE_GAIN_B)
+FE_OFFSET_INDICES: tuple[int, int, int] = (FE_OFFSET_R, FE_OFFSET_G, FE_OFFSET_B)
 
 #: One AFE probe line: 512 px × 3 ch × 2 bytes (16-bit).
 AFE_STRIP_PIXELS = 512
@@ -88,33 +90,34 @@ SHADING_WIDTH_BY_DPI: dict[int, int] = {
     3600: 4956,  # session 06, declared 60416
     7200: 10223,
 }
-#: Dichotomy defaults (16-bit strip means). White target sits near the mid-phase
-#: means seen after offsets settle (~0xCC00–0xD800 at gain 0xFF) *when the head
-#: is on a bright calib patch*. At home / underexposed, that target is unreachable
-#: and the search pegs ``gain_max`` — use :func:`adaptive_afe_gain_target`.
+#: Dichotomy defaults (16-bit strip means), shared with GL845's
+#: :func:`run_afe_dichotomy`. ``AFE_OFFSET_MAX`` is the largest offset
+#: magnitude; ``AFE_GAIN_MAX`` is the top of the 6-bit PGA (``0x40`` wraps to 0).
 AFE_OFFSET_TARGET = 0x1000
 AFE_GAIN_TARGET = 0xD000
 AFE_OFFSET_MAX = 0xFF
-AFE_GAIN_MAX = 0x1FF
+AFE_GAIN_MAX = 0x3F
 AFE_DICHOTOMY_ITERS = 9
-#: Colour gain search floor — SF sessions 03/04 settle ~18–31; never walk to 0.
-AFE_GAIN_MIN = 0x10
-#: Floor/ceiling when adapting the gain target from a mid-gain probe.
-#: Floor is soft — :func:`adaptive_afe_gain_target` may return the probe peak
+#: Colour offset search floor — SF sessions 03/04 settle ~+18..+31; never walk to 0.
+AFE_OFFSET_MIN = 0x10
+#: Floor/ceiling when adapting the white target from the mid-offset probe.
+#: Floor is soft — :func:`adaptive_afe_white_target` may return the probe peak
 #: itself when that is below this (see implementation).
-AFE_GAIN_TARGET_MIN = 0x0800
-AFE_GAIN_TARGET_MAX = AFE_GAIN_TARGET
-#: Aim here when the ``0x80`` probe is already hot. Empirical: this lands gains
+AFE_WHITE_TARGET_MIN = 0x0800
+AFE_WHITE_TARGET_MAX = AFE_GAIN_TARGET
+#: Aim here when the ``0x80`` probe is already hot. Empirical: this lands offsets
 #: near SF's own codes (0x14, 0x1F, 0x17) and shading whites ~50k. It is *not*
 #: comparable to SF's own probe mean (~49.9k in sessions 03/04) — NegPy reads a
-#: different window and exposure, and takes planar means. Raising it to match SF
-#: pegged R at ``AFE_GAIN_MAX`` and clipped the R dark term to 0.
-AFE_GAIN_TARGET_SF_WHITE = 0x3000
-#: Session-04 colour gain fallback when search collapses to zero.
-COLOR_AFE_SESSION04_GAINS: tuple[int, int, int] = (0x14, 0x1F, 0x17)
-#: Best-fit divisor for capture coarse offsets: ``round((65535 - mean) / D)``.
+#: different window and exposure. Raising it to match SF pegged the R offset at
+#: the top of its range and clipped the R dark term to 0.
+AFE_WHITE_TARGET_SF = 0x3000
+#: Session-04 colour offset fallback when the search collapses to zero.
+COLOR_AFE_SESSION04_OFFSETS: tuple[int, int, int] = (0x14, 0x1F, 0x17)
+#: Sign bit of the 9-bit sign-magnitude FE offset code (``0x05``-``0x07``).
+AFE_OFFSET_SIGN = 0x100
+#: Best-fit divisor for capture coarse gains: ``round((65535 - mean) / D)``.
 #: Fits sessions 03/04 within ±2 counts (CALIB.md); not a proven SF identity.
-AFE_OFFSET_COARSE_DIVISOR = 1155
+AFE_GAIN_COARSE_DIVISOR = 1155
 
 
 def _u16_plane(strip: bytes, *, pixels: int) -> list[int]:
@@ -158,40 +161,52 @@ def choose_usb_planar(strip: bytes, *, pixels: int = AFE_STRIP_PIXELS) -> bool:
     return not (c3 > c1 + 0.08)
 
 
-def adaptive_afe_gain_target(probe_means: Sequence[float]) -> float:
-    """Pick a reachable white target from a mid-gain (0x80) probe.
+def adaptive_afe_white_target(probe_means: Sequence[float]) -> float:
+    """Pick a reachable white target for the offset search from the ``0x80`` probe.
 
-    SF sessions 03/04 settle gains *down* from ``0x80`` toward ~20. If the mid-gain
-    probe is already at/above ``AFE_GAIN_TARGET_SF_WHITE``, aim there so dichotomy
-    lowers gains. If the probe is dimmer (dark home), aim ~15% above the peak so
-    search can raise gains.
+    SF sessions 03/04 settle offsets *down* from ``0x80`` toward ~+20. If the
+    probe is already at/above ``AFE_WHITE_TARGET_SF``, aim there so dichotomy
+    lowers offsets. If the probe is dimmer (dark home), aim ~15% above the peak
+    so search can raise them.
     """
     peak = max(float(m) for m in probe_means) if probe_means else 0.0
     if peak <= 0:
-        return float(AFE_GAIN_TARGET_MIN)
-    if peak >= float(AFE_GAIN_TARGET_SF_WHITE):
-        return float(AFE_GAIN_TARGET_SF_WHITE)
+        return float(AFE_WHITE_TARGET_MIN)
+    if peak >= float(AFE_WHITE_TARGET_SF):
+        return float(AFE_WHITE_TARGET_SF)
     guessed = max(peak * 1.15, peak + 256.0)
-    return float(max(AFE_GAIN_TARGET_MIN, min(AFE_GAIN_TARGET_MAX, int(guessed))))
+    return float(max(AFE_WHITE_TARGET_MIN, min(AFE_WHITE_TARGET_MAX, int(guessed))))
 
 
-def coarse_offsets_from_wide_means(
+def encode_afe_offset(value: int) -> int:
+    """Signed offset (-255..+255) to the 9-bit sign-magnitude FE code."""
+    v = max(-AFE_OFFSET_MAX, min(AFE_OFFSET_MAX, int(value)))
+    return AFE_OFFSET_SIGN | -v if v < 0 else v
+
+
+def decode_afe_offset(code: int) -> int:
+    """9-bit sign-magnitude FE code to a signed offset (``0x100`` is -0 → 0)."""
+    c = int(code)
+    magnitude = c & AFE_OFFSET_MAX
+    return -magnitude if c & AFE_OFFSET_SIGN else magnitude
+
+
+def coarse_gains_from_wide_means(
     means: Sequence[float],
     *,
-    divisor: int = AFE_OFFSET_COARSE_DIVISOR,
-    offset_max: int = AFE_OFFSET_MAX,
+    divisor: int = AFE_GAIN_COARSE_DIVISOR,
+    gain_max: int = AFE_GAIN_MAX,
 ) -> tuple[int, int, int]:
-    """Capture coarse offset seed: ``round((65535 - mean) / divisor)``.
+    """Capture coarse PGA gains: ``round((65535 - mean) / divisor)``.
 
-    Matches sessions 03/04 within a couple of counts (CALIB.md). Seed offset
-    dichotomy from this rather than ``(0,0,0)``.
+    Matches sessions 03/04 within a couple of counts (CALIB.md).
     """
     if len(means) != 3:
         raise ValueError("means must be length-3 RGB")
     out: list[int] = []
     for mean in means:
         code = round((65535.0 - float(mean)) / float(divisor))
-        out.append(max(0, min(int(offset_max), code)))
+        out.append(max(0, min(int(gain_max), code)))
     return (out[0], out[1], out[2])
 
 
@@ -219,17 +234,22 @@ def rgb_layout_score(rgb) -> float:
 
 @dataclass(frozen=True)
 class AfeFrontend:
-    """Settled FE offset/gain words (16-bit) for R,G,B."""
+    """Settled FE codes for R,G,B.
+
+    ``gains`` are the 6-bit PGA codes (``0x02``-``0x04``); ``offsets`` are the
+    9-bit sign-magnitude offset codes (``0x05``-``0x07``). GL845 reads the
+    fields the same way.
+    """
 
     offsets: tuple[int, int, int]
     gains: tuple[int, int, int]
 
     def as_fe_writes(self) -> list[tuple[int, int]]:
-        """Return ``(fe_index, value)`` pairs in capture-friendly order."""
+        """Return ``(fe_index, value)`` pairs in capture order (gains, then offsets)."""
         out: list[tuple[int, int]] = []
-        for idx, val in zip(FE_OFFSET_INDICES, self.offsets, strict=True):
-            out.append((idx, int(val) & 0xFFFF))
         for idx, val in zip(FE_GAIN_INDICES, self.gains, strict=True):
+            out.append((idx, int(val) & 0xFFFF))
+        for idx, val in zip(FE_OFFSET_INDICES, self.offsets, strict=True):
             out.append((idx, int(val) & 0xFFFF))
         return out
 
@@ -261,60 +281,60 @@ class AfeSearchPhase:
 
 
 #: Capture-derived phase list (session 03). Numeric FE updates are unit-specific;
-#: runtime search uses :func:`run_afe_dichotomy` rather than replaying these
-#: constants.
+#: runtime search does not replay these constants. Offset codes ``>= 0x100``
+#: are negative (sign-magnitude), e.g. ``0x16A`` is -106.
 AFE_SEARCH_PHASES_CAPTURE: tuple[AfeSearchPhase, ...] = (
     AfeSearchPhase("init_zeros", offsets=(0, 0, 0), gains=(0, 0, 0)),
     AfeSearchPhase(
-        "gain_probe_0x80",
-        offsets=(0, 0, 0),
-        gains=(0x80, 0x80, 0x80),
+        "offset_probe_0x80",
+        gains=(0, 0, 0),
+        offsets=(0x80, 0x80, 0x80),
         strip_bytes=AFE_STRIP_BYTES,
         note="first 3072-byte strip",
     ),
     AfeSearchPhase(
-        "gain_probe_0xff",
-        gains=(0xFF, 0xFF, 0xFF),
+        "offset_probe_0xff",
+        offsets=(0xFF, 0xFF, 0xFF),
         strip_bytes=AFE_STRIP_BYTES,
     ),
     AfeSearchPhase(
-        "gain_high_estimate",
-        gains=(0x016A, 0x0142, 0x015B),
-        note="session-03 example; values are unit-specific",
+        "offset_negative_estimate",
+        offsets=(0x016A, 0x0142, 0x015B),
+        note="session-03 example (-106, -66, -91); values are unit-specific",
     ),
     AfeSearchPhase(
-        "wide_offset_strip",
-        offsets=(0, 0, 0),
+        "wide_gain_strip",
+        gains=(0, 0, 0),
         strip_bytes=AFE_WIDE_BYTES,
-        note="62268-byte read before coarse offsets",
+        note="62268-byte read before coarse gains",
     ),
     AfeSearchPhase(
-        "offset_coarse",
-        offsets=(0x24, 0x1A, 0x21),
-        note="session-03 example coarse offsets",
+        "gain_coarse",
+        gains=(0x24, 0x1A, 0x21),
+        note="session-03 example coarse gains",
     ),
     AfeSearchPhase(
-        "gain_reprobe_0x80",
-        gains=(0x80, 0x80, 0x80),
+        "offset_reprobe_0x80",
+        offsets=(0x80, 0x80, 0x80),
         strip_bytes=AFE_STRIP_BYTES,
     ),
     AfeSearchPhase(
-        "gain_reprobe_0xff",
-        gains=(0xFF, 0xFF, 0xFF),
+        "offset_reprobe_0xff",
+        offsets=(0xFF, 0xFF, 0xFF),
         strip_bytes=AFE_STRIP_BYTES,
     ),
-    AfeSearchPhase("gain_mid_high", gains=(0x115, 0x113, 0x113)),
-    AfeSearchPhase("gain_low", gains=(0x0C, 0x16, 0x10)),
+    AfeSearchPhase("offset_negative_small", offsets=(0x115, 0x113, 0x113)),
+    AfeSearchPhase("offset_low", offsets=(0x0C, 0x16, 0x10)),
     AfeSearchPhase(
         "shading_upload_unity_white",
         note="AHB 0x10014000 with white=0x2000; dark from dark strip",
     ),
-    AfeSearchPhase("gain_settle", gains=(0x12, 0x1E, 0x17)),
+    AfeSearchPhase("offset_settle", offsets=(0x12, 0x1E, 0x17)),
     AfeSearchPhase(
         "shading_upload_measured_white",
         note="AHB 0x10014000 with per-pixel white terms",
     ),
-    AfeSearchPhase("offset_fine", offsets=(0x26, 0x1E, 0x25)),
+    AfeSearchPhase("gain_fine", gains=(0x26, 0x1E, 0x25)),
 )
 
 

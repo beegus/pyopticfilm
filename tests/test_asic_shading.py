@@ -30,8 +30,8 @@ def _blob_entry(geometry, *, blob: bytes = b"\x01\x02\x03\x04") -> CalibEntry:
         white=np.full((geometry.pixels, 3), 65535, dtype=np.uint16),
         asic_shading=True,
         shading_blob=blob,
-        afe_offsets=(38, 30, 36),
-        afe_gains=(19, 31, 23),
+        afe_gains=(38, 30, 36),
+        afe_offsets=(19, 31, 23),
     )
 
 
@@ -68,7 +68,7 @@ def test_measure_disarms_motor_and_persists_blob(tmp_path: Path):
         order.append("shade")
         assert asic._motor_moves_enabled is False
         asic.asic_shading_ready = True
-        asic.last_afe = MagicMock(offsets=(38, 30, 36), gains=(19, 31, 23))
+        asic.last_afe = MagicMock(gains=(38, 30, 36), offsets=(19, 31, 23))
         return b"BLOBDATA"
 
     asic.search_afe.side_effect = search_afe
@@ -87,7 +87,7 @@ def test_measure_disarms_motor_and_persists_blob(tmp_path: Path):
 def test_measure_reuses_colour_afe_when_dpi_changes(tmp_path: Path):
     """1800→3600 remesures shading but must not re-run AFE search (0xcd hang)."""
     asic = _asic(motor=True)
-    asic.last_afe = MagicMock(offsets=(38, 30, 36), gains=(19, 31, 23))
+    asic.last_afe = MagicMock(gains=(38, 30, 36), offsets=(19, 31, 23))
     asic._scan_method = "transparency"
     asic.search_afe.side_effect = AssertionError("must not re-search")
 
@@ -528,40 +528,40 @@ def test_validate_color_shading_gains_band():
     assert "too dim" in reason
 
 
-def test_adaptive_afe_gain_target_bright_probe_aims_sf_white():
+def test_adaptive_afe_white_target_bright_probe_aims_sf_white():
     from pyopticfilm.scan.calib_gl128 import (
-        AFE_GAIN_TARGET_SF_WHITE,
-        adaptive_afe_gain_target,
+        AFE_WHITE_TARGET_SF,
+        adaptive_afe_white_target,
     )
 
-    assert adaptive_afe_gain_target((33000, 35000, 38000)) == float(AFE_GAIN_TARGET_SF_WHITE)
-    assert adaptive_afe_gain_target((13000, 12000, 12500)) == float(AFE_GAIN_TARGET_SF_WHITE)
+    assert adaptive_afe_white_target((33000, 35000, 38000)) == float(AFE_WHITE_TARGET_SF)
+    assert adaptive_afe_white_target((13000, 12000, 12500)) == float(AFE_WHITE_TARGET_SF)
 
 
-def test_adaptive_afe_gain_target_dim_probe_raises():
+def test_adaptive_afe_white_target_dim_probe_raises():
     from pyopticfilm.scan.calib_gl128 import (
-        AFE_GAIN_TARGET_SF_WHITE,
-        adaptive_afe_gain_target,
+        AFE_WHITE_TARGET_SF,
+        adaptive_afe_white_target,
     )
 
-    target = adaptive_afe_gain_target((2000, 2100, 1900))
+    target = adaptive_afe_white_target((2000, 2100, 1900))
     assert target > 2100
-    assert target < float(AFE_GAIN_TARGET_SF_WHITE)
+    assert target < float(AFE_WHITE_TARGET_SF)
 
 
-def test_coarse_offsets_from_wide_means_session_scale():
+def test_coarse_gains_from_wide_means_session_scale():
     from pyopticfilm.scan.calib_gl128 import (
-        coarse_offsets_from_wide_means,
+        coarse_gains_from_wide_means,
     )
 
     # Invert session-04-ish coarse (~38/30/36): mean ≈ 65535 - code*1155.
     means = tuple(65535 - c * 1155 for c in (38, 30, 36))
-    assert coarse_offsets_from_wide_means(means) == (38, 30, 36)
+    assert coarse_gains_from_wide_means(means) == (38, 30, 36)
 
 
 def test_search_afe_codes_respects_code_min():
     from pyopticfilm.scan.calib_gl128 import (
-        AFE_GAIN_MIN,
+        AFE_OFFSET_MIN,
         search_afe_codes,
     )
 
@@ -570,28 +570,28 @@ def test_search_afe_codes_respects_code_min():
         del codes
         return (40000.0, 40000.0, 40000.0)
 
-    gains = search_afe_codes(
+    offsets = search_afe_codes(
         initial=(0x80, 0x80, 0x80),
-        code_max=0x1FF,
-        code_min=AFE_GAIN_MIN,
+        code_max=0xFF,
+        code_min=AFE_OFFSET_MIN,
         target=0x3000,
         iterations=9,
         tolerance=512.0,
         code_increases_mean=True,
         apply=apply,
     )
-    assert gains == (AFE_GAIN_MIN, AFE_GAIN_MIN, AFE_GAIN_MIN)
+    assert offsets == (AFE_OFFSET_MIN, AFE_OFFSET_MIN, AFE_OFFSET_MIN)
 
 
 def test_colour_afe_uses_coarse_only_lamp_stays_on(monkeypatch):
     import pyopticfilm.asic.gl128 as gl128_mod
     from pyopticfilm.asic.gl128 import Gl128
     from pyopticfilm.scan.calib_gl128 import (
-        AFE_GAIN_MIN,
+        AFE_OFFSET_MIN,
         AFE_STRIP_PIXELS,
         AFE_WIDE_PIXELS,
         AfeSearchConfig,
-        coarse_offsets_from_wide_means,
+        coarse_gains_from_wide_means,
     )
 
     monkeypatch.setattr(gl128_mod.time, "sleep", lambda *_a, **_k: None)
@@ -602,14 +602,14 @@ def test_colour_afe_uses_coarse_only_lamp_stays_on(monkeypatch):
         calls.append(kwargs)
         apply = kwargs["apply"]
         apply(kwargs["initial"])
-        return (AFE_GAIN_MIN, AFE_GAIN_MIN + 1, AFE_GAIN_MIN + 2)
+        return (AFE_OFFSET_MIN, AFE_OFFSET_MIN + 1, AFE_OFFSET_MIN + 2)
 
     monkeypatch.setattr(gl128_mod, "search_afe_codes", fake_search)
 
     sample = (30000).to_bytes(2, "little")
     strip = (sample * 3) * AFE_STRIP_PIXELS
     wide = (sample * 3) * AFE_WIDE_PIXELS
-    expected_coarse = coarse_offsets_from_wide_means((30000.0, 30000.0, 30000.0))
+    expected_coarse = coarse_gains_from_wide_means((30000.0, 30000.0, 30000.0))
 
     def _strip(size=AFE_STRIP_PIXELS * 6, **_k):
         return wide if size >= len(wide) else strip
@@ -622,11 +622,12 @@ def test_colour_afe_uses_coarse_only_lamp_stays_on(monkeypatch):
     asic.lamp_off = MagicMock()
 
     result = asic.search_afe(config=AfeSearchConfig(iterations=1))
-    assert result.offsets == expected_coarse
-    assert result.gains == (AFE_GAIN_MIN, AFE_GAIN_MIN + 1, AFE_GAIN_MIN + 2)
+    assert result.gains == expected_coarse
+    assert result.offsets == (AFE_OFFSET_MIN, AFE_OFFSET_MIN + 1, AFE_OFFSET_MIN + 2)
     assert len(calls) == 1
-    assert calls[0]["code_min"] == AFE_GAIN_MIN
-    assert calls[0]["code_max"] > 0xFF
+    assert calls[0]["code_min"] == AFE_OFFSET_MIN
+    # Signed offset search stays below the sign-magnitude negatives (>= 0x100).
+    assert calls[0]["code_max"] == 0xFF
     asic.lamp_on.assert_called()
     asic.lamp_off.assert_not_called()
 
@@ -637,9 +638,9 @@ def test_colour_afe_zero_collapse_restores_coarse_and_session04(monkeypatch):
     from pyopticfilm.scan.calib_gl128 import (
         AFE_STRIP_PIXELS,
         AFE_WIDE_PIXELS,
-        COLOR_AFE_SESSION04_GAINS,
+        COLOR_AFE_SESSION04_OFFSETS,
         AfeSearchConfig,
-        coarse_offsets_from_wide_means,
+        coarse_gains_from_wide_means,
     )
 
     monkeypatch.setattr(gl128_mod.time, "sleep", lambda *_a, **_k: None)
@@ -654,7 +655,7 @@ def test_colour_afe_zero_collapse_restores_coarse_and_session04(monkeypatch):
     sample = (28000).to_bytes(2, "little")
     strip = (sample * 3) * AFE_STRIP_PIXELS
     wide = (sample * 3) * AFE_WIDE_PIXELS
-    expected_coarse = coarse_offsets_from_wide_means((28000.0, 28000.0, 28000.0))
+    expected_coarse = coarse_gains_from_wide_means((28000.0, 28000.0, 28000.0))
 
     def _strip(size=AFE_STRIP_PIXELS * 6, **_k):
         return wide if size >= len(wide) else strip
@@ -667,8 +668,8 @@ def test_colour_afe_zero_collapse_restores_coarse_and_session04(monkeypatch):
     asic.lamp_off = MagicMock()
 
     result = asic.search_afe(config=AfeSearchConfig(iterations=1))
-    assert result.offsets == expected_coarse
-    assert result.gains == COLOR_AFE_SESSION04_GAINS
+    assert result.gains == expected_coarse
+    assert result.offsets == COLOR_AFE_SESSION04_OFFSETS
     asic.lamp_off.assert_not_called()
 
 
@@ -679,7 +680,7 @@ def test_colour_afe_peg_near_max_falls_back_and_skips_strike(monkeypatch):
         AFE_STRIP_PIXELS,
         AFE_WIDE_PIXELS,
         AfeSearchConfig,
-        coarse_offsets_from_wide_means,
+        coarse_gains_from_wide_means,
     )
 
     monkeypatch.setattr(gl128_mod.time, "sleep", lambda *_a, **_k: None)
@@ -687,14 +688,14 @@ def test_colour_afe_peg_near_max_falls_back_and_skips_strike(monkeypatch):
     def fake_search(**kwargs):
         apply = kwargs["apply"]
         apply(kwargs["initial"])
-        return (510, 510, 509)
+        return (254, 254, 253)
 
     monkeypatch.setattr(gl128_mod, "search_afe_codes", fake_search)
 
     sample = (32000).to_bytes(2, "little")
     strip = (sample * 3) * AFE_STRIP_PIXELS
     wide = (sample * 3) * AFE_WIDE_PIXELS
-    expected_coarse = coarse_offsets_from_wide_means((32000.0, 32000.0, 32000.0))
+    expected_coarse = coarse_gains_from_wide_means((32000.0, 32000.0, 32000.0))
 
     def _strip(size=AFE_STRIP_PIXELS * 6, **_k):
         return wide if size >= len(wide) else strip
@@ -708,8 +709,8 @@ def test_colour_afe_peg_near_max_falls_back_and_skips_strike(monkeypatch):
     asic._strike_lamp_on = MagicMock()
 
     result = asic.search_afe(config=AfeSearchConfig(iterations=1))
-    assert result.offsets == expected_coarse
-    assert result.gains == (0x80, 0x80, 0x80)
+    assert result.gains == expected_coarse
+    assert result.offsets == (0x80, 0x80, 0x80)
     assert asic.last_afe is result
     asic.lamp_on.assert_called()
     asic.lamp_off.assert_not_called()
@@ -971,7 +972,7 @@ def test_run_asic_shading_calls_exposure_only_after_unity(monkeypatch):
     asic = Gl128(proto, MODEL_8200I_SE)
     asic._initialized = True
     asic._motor_moves_enabled = False
-    asic.last_afe = AfeFrontend(offsets=(19, 16, 18), gains=(16, 16, 16))
+    asic.last_afe = AfeFrontend(gains=(19, 16, 18), offsets=(16, 16, 16))
     asic.apply_frontend = MagicMock()
     asic._require_carriage_at_home = MagicMock()
     asic.lamp_off = MagicMock()
@@ -1017,7 +1018,7 @@ def test_measure_colour_falls_back_to_host_calib_when_dvdset_white_raw():
     geo = _geometry(1800)
     asic = _asic(shading_ready=False)
     asic.search_afe = MagicMock(return_value=None)
-    asic.last_afe = AfeFrontend(offsets=(18, 15, 18), gains=(16, 16, 16))
+    asic.last_afe = AfeFrontend(gains=(18, 15, 18), offsets=(16, 16, 16))
     asic.asic_shading_ready = False
     asic.last_color_shading_host_ok = True
     asic.last_host_calib_dark = [(900, 970, 990)] * 64

@@ -25,7 +25,8 @@ from pyopticfilm.scan.pipeline import ImagePipeline
 logger = get_logger(__name__)
 
 CACHE_IDENT = "pyopticfilm"
-CACHE_VERSION = 9
+#: v10: GL128 ``afe_gains`` / ``afe_offsets`` hold 0x02-0x04 / 0x05-0x07 (were swapped).
+CACHE_VERSION = 10
 DARK_SETTLE_S = 0.2
 WHITE_SETTLE_S = 0.5
 
