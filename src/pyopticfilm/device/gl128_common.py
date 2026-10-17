@@ -63,8 +63,9 @@ MEMORY_LAYOUT_REGS: dict[int, int] = {
 }
 
 #: Analog frontend defaults written through ``0x51``/``0x5D``/``0x5E`` during
-#: boot. Indices 0x02-0x04 are per-channel offsets and 0x05-0x07 per-channel
-#: gains; the driver searches those at calibration time, so boot zeroes them.
+#: boot. AD9826 layout: indices 0x02-0x04 are per-channel 6-bit PGA gains and
+#: 0x05-0x07 per-channel 9-bit sign-magnitude offsets; the driver searches
+#: those at calibration time, so boot zeroes them.
 FRONTEND_REGS: dict[int, int] = {
     0x00: 0x00F8,
     0x01: 0x0080,
