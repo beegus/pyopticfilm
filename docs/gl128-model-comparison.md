@@ -85,10 +85,11 @@ Positioning slope **order** is not a divergence: both models upload
 | 8 | Image-pass dummy `0x2B` | higher than SE `DUMMY_BY_DPI` at every measured PPI | neither |
 | 9 | White shading dummy @ 7200 | `0x26` | neither (V2 `0x10`, SE `0x17`) |
 | 10 | Slope ROM payloads | CUSTOM heads `0x32BB` then `0x846A` (not SE `0x1FB4`/`0x16DE`) | neither |
+| 11 | Per-scan sensor timing (`0x06`/`0x0B`/`0x52`–`0x57`/`0x5A`/`0x5B`/`0x70`–`0x73`) | own values (§10.7) | neither |
 
 Using the 8200i SE leaf on `0x181F` therefore under-scans Y (SE ladder
-`LINCNT` / feed2), runs the wrong exposure and shading clocks (white-rail
-clip), and ignores a different motor-slope ROM. Image `0xA5`/`0x2B` also
+`LINCNT` / feed2), runs the wrong exposure, sensor timing and shading clocks
+(white-rail clip), and ignores a different motor-slope ROM. Image `0xA5`/`0x2B` also
 differ; they are not proven to be the SilverFast speed advantage.
 
 ---
@@ -670,16 +671,46 @@ AHB windows per upload pair; they live in
 `Model8300iSE.slope_table_slow()` / `slope_table_fast()`. SE and V2 keep the
 SE ROM through `Gl128Common` defaults.
 
-### 10.7 Why SE-as-8300i fails (maps to reporter symptoms)
+### 10.7 Per-scan sensor timing overlay
+
+Before every AFE, shading and image acquire, SilverFast rewrites a block of
+sensor/AFE timing registers on top of the boot map (`sensor_custom_regs`).
+The 8300i values are constant across every measured PPI and across the IR
+and colour passes, and differ from the SE/V2 `SCAN_REGS` (SE sessions 02,
+04, 05 and 13 match `SCAN_REGS` exactly):
+
+| Reg | 8200i SE / 8100 V2 | 8300i SE |
+|-----|--------------------|----------|
+| `0x06` | `0xF0` | `0x10` |
+| `0x0B` | `0x4C` | `0x6C` |
+| `0x52`–`0x57` | `0B 0D 0F 01 05 07` | `08 0A 00 02 04 06` |
+| `0x5A` / `0x5B` | `31 79` | `22 4A` |
+| `0x70`–`0x73` | `0A 0B 0C 0D` | `06 07 07 08` |
+
+`0x36` stays `0x1C` on both (boot and scan). An independent USBPcap set from
+another 8300i unit (SilverFast 9 HDRi and VueScan 9.8.44,
+[NegPy #1444](https://github.com/marcinz606/NegPy/issues/1444)) shows the same
+values. Under the SE values that unit's colour white strip read ~2.3x hotter
+than SilverFast at the same exposure and clipped (~92 % of samples ≥ 65000);
+with the 8300i values its AFE search landed next to SilverFast's own gains.
+Other units ([#79](https://github.com/jboneng/pyopticfilm/issues/79)) had
+enough headroom to scan on the SE values.
+
+The IR AFE sequence has the same shape as colour on both IR models (probe at
+gains 0 / offsets `0x80` and `0xFF`, one wide 62268-byte strip, then coarse
+gains), with `0x03=0x20` (white lamp off) and `0x37` IR LED set. IR gains
+differ per unit (SE session 05: 6/16/12; 8300i capture: 28/35/33).
+
+### 10.8 Why SE-as-8300i fails (maps to reporter symptoms)
 
 | Symptom | Capture-backed cause |
 |---------|----------------------|
 | Missing bottom of frame | SE ladder `LINCNT` too short vs V2/8300i full-frame height (~1.35 mm at 7200); SE ladder feed2 13560 vs 8300i ~13128 shifts Y |
 | Missing right of frame | **Not** a STR/END mismatch (242/10610 on both). Remaining candidates: host dummy trim (`optical_end_inactive_native=96`) or crop, not a different USB window |
 | Slower than SilverFast | Image `0xA5`/`0xAB` and dummy **differ** from SE; CUSTOM slope ROM. Larger `0xA5` is not proven to mean a faster clock |
-| Colour ASIC shading white clip (≥65000) | SF shading/image exposure **15000** and different white-strip clocks/dummies vs SE 14000 + SE `shading_strip_clocks` |
+| Colour ASIC shading white clip (≥65000) | SE per-scan sensor timing (§10.7); also SF shading/image exposure **15000** and different white-strip clocks/dummies vs SE 14000 + SE `shading_strip_clocks` |
 
-### 10.8 Open gaps (8300i SE)
+### 10.9 Open gaps (8300i SE)
 
 - Full PPI ladder still missing **720** and **1440** (image clocks / feed2 / shading still nearest-band fills — known-unreliable after 900/1800 corrections)
 - Complete 7200 IR image capture (current with-IR file has no second image preamble)
@@ -696,7 +727,7 @@ edge green fringe / period-2 sawtooth fixed on HW at 1440/2400 (rounded
 
 ### 8300i SE
 
-See [§10.8](#108-open-gaps-8300i-se).
+See [§10.9](#109-open-gaps-8300i-se).
 
 ### 135i (usbmon set)
 

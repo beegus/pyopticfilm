@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import inspect
 import json
 import os
@@ -17,7 +18,7 @@ import numpy as np
 
 from pyopticfilm.device.model_8200i import MODEL_8200I
 from pyopticfilm.device.protocol import AsicDriver, FilmModel
-from pyopticfilm.exceptions import CalibrationError
+from pyopticfilm.exceptions import AsicError, CalibrationError, ScanError
 from pyopticfilm.logging import get_logger
 from pyopticfilm.scan.geometry import ScanGeometry, compute_calib_geometry, compute_geometry
 from pyopticfilm.scan.pipeline import ImagePipeline
@@ -26,7 +27,8 @@ logger = get_logger(__name__)
 
 CACHE_IDENT = "pyopticfilm"
 #: v10: GL128 ``afe_gains`` / ``afe_offsets`` hold 0x02-0x04 / 0x05-0x07 (were swapped).
-CACHE_VERSION = 10
+#: v11: entries carry a model/exposure/sensor-register ``fingerprint``.
+CACHE_VERSION = 11
 DARK_SETTLE_S = 0.2
 WHITE_SETTLE_S = 0.5
 
@@ -50,6 +52,22 @@ def colour_shading_failure_message(reason: str) -> str:
 
 def default_cache_path() -> Path:
     return Path.home() / ".cache" / "pyopticfilm" / "calib_v2.json"
+
+
+def calib_fingerprint(model: object) -> str:
+    """Hash of what a cached table depends on besides the scan window.
+
+    Model identity, exposure and the per-scan sensor registers: a table measured
+    under different values reads at a different level and must not be reused.
+    """
+    sensor = dict(getattr(model, "sensor_custom_regs", None) or {})
+    parts = {
+        "name": str(getattr(model, "name", "")),
+        "exposure": [getattr(model, "exposure_lperiod", None), getattr(model, "exposure_short", None)],
+        "sensor": sorted((int(a), int(v)) for a, v in sensor.items()),
+    }
+    digest = hashlib.sha1(json.dumps(parts, sort_keys=True).encode("utf-8"), usedforsecurity=False)
+    return digest.hexdigest()[:16]
 
 
 def call_search_afe(
@@ -98,6 +116,8 @@ class CalibEntry:
     shading_blob: bytes | None = None
     afe_offsets: tuple[int, int, int] | None = None
     afe_gains: tuple[int, int, int] | None = None
+    #: :func:`calib_fingerprint` of the model this was measured on (set by the cache).
+    fingerprint: str = ""
 
     @property
     def has_asic_blob(self) -> bool:
@@ -121,6 +141,7 @@ class CalibEntry:
             "pixels": self.pixels,
             "calibrated_at": self.calibrated_at,
             "asic_shading": self.asic_shading,
+            "fingerprint": self.fingerprint,
             "dark": self.dark.astype(np.uint16).ravel().tolist(),
             "white": self.white.astype(np.uint16).ravel().tolist(),
         }
@@ -153,15 +174,24 @@ class CalibEntry:
             shading_blob=blob,
             afe_offsets=tuple(int(v) for v in offs) if offs is not None else None,
             afe_gains=tuple(int(v) for v in gains) if gains is not None else None,
+            fingerprint=str(data.get("fingerprint", "")),
         )
 
 
 class CalibCache:
-    """Versioned JSON cache of shading entries."""
+    """Versioned JSON cache of shading entries.
 
-    def __init__(self, path: Path | None = None) -> None:
+    With a ``fingerprint``, lookups only see entries stamped with it and
+    :meth:`upsert` stamps new entries; other models' entries stay in the file.
+    """
+
+    def __init__(self, path: Path | None = None, *, fingerprint: str | None = None) -> None:
         self.path = path or default_cache_path()
+        self.fingerprint = fingerprint
         self.entries: list[CalibEntry] = []
+
+    def _visible(self, entry: CalibEntry) -> bool:
+        return self.fingerprint is None or entry.fingerprint == self.fingerprint
 
     def load(self) -> bool:
         if not self.path.exists():
@@ -202,15 +232,20 @@ class CalibCache:
         pixels: int,
     ) -> CalibEntry | None:
         for entry in self.entries:
-            if entry.matches(method=method, resolution=resolution, startx=startx, pixels=pixels):
+            if self._visible(entry) and entry.matches(
+                method=method, resolution=resolution, startx=startx, pixels=pixels
+            ):
                 return entry
         return None
 
     def upsert(self, entry: CalibEntry) -> None:
+        if self.fingerprint is not None:
+            entry.fingerprint = self.fingerprint
         self.entries = [
             e
             for e in self.entries
-            if not e.matches(
+            if not self._visible(e)
+            or not e.matches(
                 method=entry.method,
                 resolution=entry.resolution,
                 startx=entry.startx,
@@ -238,7 +273,7 @@ class Calibrator:
     ) -> None:
         self.asic = asic
         self.model = model
-        self.cache = CalibCache(cache_path)
+        self.cache = CalibCache(cache_path, fingerprint=calib_fingerprint(model))
         self.cache.load()
         self.pipeline = ImagePipeline(model)
         self._active: CalibEntry | None = None
@@ -529,6 +564,53 @@ class Calibrator:
             )
             return hit
         return self.measure_colour_asic_shading(geometry)
+
+    def measure_ir_host_flatten(self, geometry: ScanGeometry) -> bool:
+        """GL128 IR: AFE search + IR white strip at home, before the IR pass.
+
+        IR never arms DVDSET, so the white profile feeds the host flatten in
+        the session's IR plane. The IR AFE codes are kept only when that profile
+        validates; otherwise the colour AFE codes are restored and the IR pass
+        falls back to the per-image flatten. Returns ``ir_host_flatten_ready``.
+        """
+        asic = self.asic
+        if asic is None:
+            return False
+        search = getattr(asic, "search_afe", None)
+        shade = getattr(asic, "run_asic_shading", None)
+        if not callable(search) or not callable(shade):
+            return False
+        colour_afe = getattr(asic, "last_afe", None)
+        reason = None
+        try:
+            with self._stationary_motor():
+                self._ensure_at_home()
+                logger.info("GL128 running stationary IR AFE search dpi=%d", geometry.resolution)
+                search(method="infrared")
+                shade(
+                    resolution=geometry.resolution,
+                    method="infrared",
+                    strpixel=geometry.pixel_startx,
+                    endpixel=geometry.pixel_endx,
+                    dpiset=geometry.register_dpiset,
+                )
+        except (AsicError, CalibrationError, ScanError) as exc:
+            reason = str(exc)
+        ready = reason is None and bool(getattr(asic, "ir_host_flatten_ready", False))
+        if not ready:
+            asic.ir_host_flatten_ready = False  # type: ignore[attr-defined]
+            asic.last_ir_host_white = None  # type: ignore[attr-defined]
+            if colour_afe is not None:
+                apply = getattr(asic, "apply_frontend", None)
+                if callable(apply):
+                    apply(colour_afe)
+                asic.last_afe = colour_afe  # type: ignore[attr-defined]
+            logger.warning(
+                "GL128 IR calibration unavailable (%s); IR pass uses colour AFE codes "
+                "and the per-image flatten",
+                reason or "IR white profile rejected",
+            )
+        return ready
 
     def _apply_host_afe(self, entry: CalibEntry) -> None:
         """Re-apply cached FE codes so image configure matches the calib strips."""

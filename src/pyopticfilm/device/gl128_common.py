@@ -87,6 +87,7 @@ GPO_REGS: dict[int, int] = {
 #: Constant overrides the Windows driver applies on top of the boot map before
 #: every acquisition, at every resolution captured. Motor, lamp, depth and
 #: geometry registers are excluded here — the driver computes those per scan.
+#: 8200i SE / 8100 V2 values; the 8300i SE leaf overlays its own sensor timing.
 SCAN_REGS: dict[int, int] = {
     0x04: 0x42, 0x05: 0x40, 0x06: 0xF0, 0x0B: 0x4C,
     0x1C: 0x20, 0x1D: 0x80, 0x1E: 0x20,
@@ -268,6 +269,7 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "pixel_clock_by_dpi",
         "pixel_clock_long_by_dpi",
         "dummy_by_dpi",
+        "sensor_custom_regs",
     }
 )
 
@@ -336,7 +338,6 @@ GL128_SHARED_FIELDS: frozenset[str] = frozenset(
         "scan_window_end_steps",
         "motor_profile",
         "init_regs",
-        "sensor_custom_regs",
         "frontend_regs",
         "gpo_regs",
         "memory_layout_regs",
@@ -441,7 +442,6 @@ class Gl128Common:
     scan_window_end_steps: int = 27636
     motor_profile: MotorProfile = DEFAULT_GL845_MOTOR
     init_regs: Mapping[int, int] = field(default_factory=lambda: dict(INIT_REGS))
-    sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
     frontend_regs: Mapping[int, int] = field(default_factory=lambda: dict(FRONTEND_REGS))
     gpo_regs: Mapping[int, int] = field(default_factory=lambda: dict(GPO_REGS))
     memory_layout_regs: Mapping[int, int] = field(
@@ -458,6 +458,7 @@ class Gl128Common:
         max_image_lincnt_by_feed2: Mapping[int, int]
         ladder_feed2_steps: int
         ladder_lincnt_by_dpi: Mapping[int, int]
+        sensor_custom_regs: Mapping[int, int]
 
     @property
     def max_area_mm(self) -> tuple[float, float]:

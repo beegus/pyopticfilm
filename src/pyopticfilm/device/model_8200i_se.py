@@ -50,6 +50,7 @@ from pyopticfilm.device.gl128_common import (
     LPERIOD_BY_DPI,
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
+    SCAN_REGS,
     Gl128Common,
 )
 
@@ -124,6 +125,7 @@ class Model8200iSE(Gl128Common):
         default_factory=lambda: dict(PIXEL_CLOCK_LONG_BY_DPI)
     )
     dummy_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(DUMMY_BY_DPI))
+    sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
 
     def scaled_ld_shift(self, ld: int, asic_dpi: int) -> int:
         """Round line-distance shifts (floor left ~0.8 G / ~0.6 B at 1440)."""

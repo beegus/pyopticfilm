@@ -25,6 +25,10 @@ All divergent knobs below come from SilverFast 9 USBPcap full-frame captures
     Dark/white strip clocks differ from SE/V2; white @7200 dummy is ``0x26``
     (V2 ``0x10``, SE ``0x17``).  See :meth:`shading_strip_clocks`.
 
+**Sensor timing**
+    Per-scan overlay ``0x06``/``0x0B``/``0x52``–``0x57``/``0x5A``/``0x5B``/
+    ``0x70``–``0x73`` differs from SE/V2 ``SCAN_REGS`` (docs §10.7).
+
 **Slope ROM**
     CUSTOM AHB tables (heads ``0x32BB`` / ``0x846A``), not SE
     ``0x1FB4`` / ``0x16DE``.  See :mod:`pyopticfilm.device.tables_8300i_se`.
@@ -43,8 +47,21 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from pyopticfilm.device.gl128_common import LADDER_LINCNT_BY_DPI, Gl128Common
+from pyopticfilm.device.gl128_common import LADDER_LINCNT_BY_DPI, SCAN_REGS, Gl128Common
 from pyopticfilm.device.tables_8300i_se import SLOPE_TABLE_FAST, SLOPE_TABLE_SLOW
+
+# Per-scan sensor/AFE timing overlay. SilverFast writes these before every AFE,
+# shading and image acquire at every measured PPI, IR included (docs §10.7).
+# Under the SE/V2 values (``SCAN_REGS``) the colour white strip reads ~2x hotter
+# and rails on some units. ``0x36`` stays at the shared 0x1C.
+_SCAN_REGS_8300I: dict[int, int] = {
+    **SCAN_REGS,
+    0x06: 0x10,
+    0x0B: 0x6C,
+    0x52: 0x08, 0x53: 0x0A, 0x54: 0x00, 0x55: 0x02, 0x56: 0x04, 0x57: 0x06,
+    0x5A: 0x22, 0x5B: 0x4A,
+    0x70: 0x06, 0x71: 0x07, 0x72: 0x07, 0x73: 0x08,
+}
 
 # Measured full-frame PPI: 150, 300, 600, 900, 1200, 1800, 2400, 3600, 7200.
 # Still filled (no capture): 720, 1440 — nearest-band fills are known-unreliable
@@ -216,6 +233,9 @@ class Model8300iSE(Gl128Common):
     )
     dummy_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(_DUMMY_BY_DPI_8300I)
+    )
+    sensor_custom_regs: Mapping[int, int] = field(
+        default_factory=lambda: dict(_SCAN_REGS_8300I)
     )
 
     def feed_to_scan_steps_for_dpi(

@@ -16,14 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - AFE strips are now always decoded as chunky RGB. The lag test often picked planar, which blended all three channels, so the search could not balance them independently.
   - The offset search stays within `0`–`+255`. It used to step into codes `0x100` and up (negative offsets), where the strip gets darker as the code rises, so it ran away to the top and hit the "pegged at max" fallback.
   - PGA gains are capped at `0x3F`. The infrared gain search used to run to `0xFF`, crossing the 6-bit wrap three times.
+- **OpticFilm 8300i SE colour calibration** failing with `CalibrationError: Colour ASIC shading failed (white clipped at the rail …)` on some units ([NegPy #1444](https://github.com/marcinz606/NegPy/issues/1444)): the 8300i inherited the 8200i SE per-scan sensor/AFE timing registers (`0x06`, `0x0B`, `0x52`–`0x57`, `0x5A`/`0x5B`, `0x70`–`0x73`). SilverFast and VueScan program different values on the 8300i at every resolution, and under the SE values the white strip read about twice as hot and clipped. The 8300i SE now uses its own captured values. 8200i SE and 8100 V2 are unchanged (their captures match the shared table).
+- **GL128 infrared AFE search** (8200i SE, 8300i SE): the IR gain search switched the IR LED off as well as the white lamp, so it measured a dark strip and drove the gains up until the IR white strip clipped. IR gains now come from a wide strip under the IR LED, the same way SilverFast does it for colour and IR.
+- **GL128 infrared scans were never calibrated** (8200i SE, 8300i SE): the IR pass only looked up an IR calibration entry that normal scans never created, so it ran on the colour AFE codes with no white reference. Before each IR pass the driver now runs the IR AFE search and an IR white strip at home (about 10–15 s) and uses the white profile to flatten the IR plane. If the profile is rejected, the IR pass falls back to the colour AFE codes and the per-image flatten, as before.
 
 ### Changed
 
-- **Calibration cache v10**: GL128 entries saved under the old swapped AFE names are dropped, so the first scan after upgrading recalibrates once.
+- **Calibration cache v11**: entries are tagged with a fingerprint of the model, its exposure and its per-scan sensor registers, and are only reused when that matches. A table measured with different timing (or on another model sharing the cache file) is no longer applied silently, which caused banding. Older cache files are ignored, so the first scan after upgrading recalibrates once.
 
 ### Notes for integrators
 
 - `AfeFrontend.gains` / `.offsets` and the cache's `afe_gains` / `afe_offsets` now mean the same registers on GL128 as on GL845: gains are `0x02`–`0x04` and offsets are `0x05`–`0x07`. `FE_GAIN_*` / `FE_OFFSET_*`, `coarse_gains_from_wide_means`, `adaptive_afe_white_target`, `AFE_OFFSET_MIN`, `COLOR_AFE_SESSION04_OFFSETS` and `AFE_WHITE_TARGET_*` replace the old names. `encode_afe_offset` / `decode_afe_offset` convert signed offsets to and from the FE code. `AFE_GAIN_MAX` (and the `AfeSearchConfig.gain_max` default) is now `0x3F`, which also applies to GL845's forced dichotomy.
+- GL128 `sensor_custom_regs` is now a leaf-divergent field (each of `Model8200iSE`, `Model8100V2` and `Model8300iSE` declares it). `CalibCache` takes an optional `fingerprint`; `Calibrator` passes `calib_fingerprint(model)`. GL128 IR scans call the new `Calibrator.measure_ir_host_flatten(geometry)` instead of `find_for_scan(method="infrared")`.
 
 ## [1.3.6] - 2026-10-14
 

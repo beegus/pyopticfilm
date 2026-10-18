@@ -13,6 +13,8 @@ n_passes crossed with multi_exposure gives four modes:
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from pyopticfilm.device.model_8200i import MODEL_8200I
@@ -151,6 +153,26 @@ def test_invalid_manual_long_exposure_raises_before_carriage_moves():
     # pass's own invalid exposure must raise before ITS motor move, so the
     # carriage must not move a second time for the pass that's about to fail.
     assert moved == [True]
+
+
+def test_colour_ir_scan_calibrates_ir_between_colour_and_ir_passes():
+    session, _usb = _mock_gl128_session_armed()
+    order: list[str] = []
+    calibrator = MagicMock()
+    calibrator.ensure_colour_asic_shading.side_effect = lambda _geo: order.append("colour_calib")
+    calibrator.measure_ir_host_flatten.side_effect = lambda _geo: (order.append("ir_calib") or True)
+    session.calibrator = calibrator
+    orig = session.acquire_raw
+
+    def spy(geometry, *, method, **kwargs):
+        order.append(f"acquire_{method}")
+        return orig(geometry, method=method, **kwargs)
+
+    session.acquire_raw = spy  # type: ignore[method-assign]
+    session.run(resolution=1800, area=_TINY, infrared=True, n_passes=1)
+
+    assert order == ["colour_calib", "acquire_transparency", "ir_calib", "acquire_infrared"]
+    calibrator.find_for_scan.assert_not_called()
 
 
 def test_infrared_with_n_passes_greater_than_one_rejected():

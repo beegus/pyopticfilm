@@ -79,6 +79,7 @@ from pyopticfilm.device.gl128_common import (
     LPERIOD_BY_DPI,
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
+    SCAN_REGS,
     Gl128Common,
 )
 
@@ -180,6 +181,7 @@ class Model8100V2(Gl128Common):
         default_factory=lambda: dict(PIXEL_CLOCK_LONG_BY_DPI)
     )
     dummy_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(DUMMY_BY_DPI))
+    sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
 
     def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
         """Return ``(dummy, clk_a, clk_b)`` for a shading strip.

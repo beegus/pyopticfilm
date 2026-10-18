@@ -178,6 +178,17 @@ def test_divergent_fields_match_capture_catalog():
     }
     assert dict(MODEL_8100_V2.ladder_lincnt_by_dpi) == v2_ladder
     assert dict(MODEL_8300I_SE.ladder_lincnt_by_dpi) == v2_ladder
+    # Per-scan sensor timing: SE/V2 share SCAN_REGS; 8300i SilverFast writes its own.
+    assert dict(MODEL_8200I_SE.sensor_custom_regs) == dict(MODEL_8100_V2.sensor_custom_regs)
+    se_regs = dict(MODEL_8200I_SE.sensor_custom_regs)
+    i8300_regs = dict(MODEL_8300I_SE.sensor_custom_regs)
+    assert (se_regs[0x06], se_regs[0x0B], se_regs[0x5A], se_regs[0x5B]) == (0xF0, 0x4C, 0x31, 0x79)
+    assert (i8300_regs[0x06], i8300_regs[0x0B], i8300_regs[0x5A], i8300_regs[0x5B]) == (0x10, 0x6C, 0x22, 0x4A)
+    assert [i8300_regs[a] for a in range(0x52, 0x58)] == [0x08, 0x0A, 0x00, 0x02, 0x04, 0x06]
+    assert [i8300_regs[a] for a in range(0x70, 0x74)] == [0x06, 0x07, 0x07, 0x08]
+    changed = {a for a in se_regs if se_regs[a] != i8300_regs[a]}
+    assert changed == {0x06, 0x0B, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x5A, 0x5B, 0x70, 0x71, 0x72, 0x73}
+    assert set(i8300_regs) == set(se_regs)
 
 
 def test_every_public_field_is_catalogued():

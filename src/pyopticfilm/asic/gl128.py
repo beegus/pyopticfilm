@@ -588,41 +588,24 @@ class Gl128:
             strip = self.acquire_afe_strip(AFE_STRIP_BYTES)
             return channel_means_u16(strip, planar=False)
 
-        gain_seed = (0, 0, 0)
-        if infrared:
-            # IR gain hunt under white lamp off / IR LED on.
-            self.lamp_off()
-            time.sleep(0.2)
-
-            def apply_gains(gains: tuple[int, int, int]) -> tuple[float, float, float]:
-                return measure(AfeFrontend(gains=gains, offsets=(0x80, 0x80, 0x80)))
-
-            gains = search_afe_codes(
-                initial=gain_seed,
-                code_max=cfg.gain_max,
-                target=float(cfg.offset_target),
-                iterations=cfg.iterations,
-                tolerance=cfg.tolerance,
-                code_increases_mean=cfg.gain_increases_mean,
-                apply=apply_gains,
-            )
-            self.lamp_on()
-            time.sleep(0.5)
-        else:
-            # SF: wide strip + coarse gains with lamp still on; no dichotomy.
-            self.apply_frontend(AfeFrontend(gains=(0, 0, 0), offsets=(0x80, 0x80, 0x80)))
-            wide = self.acquire_afe_strip(AFE_WIDE_BYTES)
-            wide_means = channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False)
-            gains = coarse_gains_from_wide_means(wide_means)
-            gain_seed = gains
-            logger.info(
-                "GL128 AFE wide strip (lamp on) means=(%.0f,%.0f,%.0f) coarse_gains=%s",
-                wide_means[0],
-                wide_means[1],
-                wide_means[2],
-                gains,
-            )
-            time.sleep(0.5)
+        # SF (colour and IR alike, 8200i SE session 05 / 8300i captures): wide
+        # strip + coarse gains under the method's light, no gain dichotomy. IR
+        # keeps the IR LED on and the white lamp off (lamp_on in IR mode); never
+        # lamp_off() here — it clears the IR LED too and the gains run away.
+        self.apply_frontend(AfeFrontend(gains=(0, 0, 0), offsets=(0x80, 0x80, 0x80)))
+        wide = self.acquire_afe_strip(AFE_WIDE_BYTES)
+        wide_means = channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False)
+        gains = coarse_gains_from_wide_means(wide_means)
+        gain_seed = gains
+        logger.info(
+            "GL128 AFE wide strip (%s) means=(%.0f,%.0f,%.0f) coarse_gains=%s",
+            "IR LED" if infrared else "lamp on",
+            wide_means[0],
+            wide_means[1],
+            wide_means[2],
+            gains,
+        )
+        time.sleep(0.5)
 
         def _encode(values: tuple[int, int, int]) -> tuple[int, int, int]:
             return (encode_afe_offset(values[0]), encode_afe_offset(values[1]), encode_afe_offset(values[2]))

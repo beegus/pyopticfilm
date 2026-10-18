@@ -133,13 +133,7 @@ class ScanSession:
                 # SilverFast / SE: ASIC shading before any image feed.
                 calib = self.calibrator.ensure_colour_asic_shading(geometry)
             elif is_gl128:
-                calib = self.calibrator.find_for_scan(method=method, geometry=geometry)
-                if calib is None:
-                    logger.warning(
-                        "No calib cache for method=%s dpi=%d — scanning uncalibrated.",
-                        method,
-                        geometry.resolution,
-                    )
+                self.calibrator.measure_ir_host_flatten(geometry)
             else:
                 # Genesys (GL845/843/842): host dark/white stretch — never the
                 # SE ``run_asic_shading`` path (those ASICs do not implement it).

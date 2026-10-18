@@ -494,15 +494,7 @@ class Gl128ScanSession(ScanSession):
                     else:
                         calib = self.calibrator.ensure_colour_asic_shading(geometry)
                 else:
-                    calib = self.calibrator.find_for_scan(
-                        method=method, geometry=geometry
-                    )
-                    if calib is None:
-                        logger.warning(
-                            "No calib cache for method=%s dpi=%d — scanning uncalibrated.",
-                            method,
-                            geometry.resolution,
-                        )
+                    self.calibrator.measure_ir_host_flatten(geometry)
 
             logger.info(
                 "GL128 pass %s dpi=%d area=%s feed2=%d lincnt=%d str=%d end=%d %dx%d",
