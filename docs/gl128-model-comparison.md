@@ -676,8 +676,8 @@ SE ROM through `Gl128Common` defaults.
 Before every AFE, shading and image acquire, SilverFast rewrites a block of
 sensor/AFE timing registers on top of the boot map (`sensor_custom_regs`).
 The 8300i values are constant across every measured PPI and across the IR
-and colour passes, and differ from the SE/V2 `SCAN_REGS` (SE sessions 02,
-04, 05 and 13 match `SCAN_REGS` exactly):
+and colour passes, and differ from the SE/V2 `SCAN_REGS` (SE sessions 04,
+05 and 13 and V2 sessions 03 and 05 match `SCAN_REGS` exactly):
 
 | Reg | 8200i SE / 8100 V2 | 8300i SE |
 |-----|--------------------|----------|
