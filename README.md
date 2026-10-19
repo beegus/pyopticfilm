@@ -279,6 +279,8 @@ from pyopticfilm.logging import enable_debug_logging
 enable_debug_logging()
 ```
 
+For calibration problems, `python tools/diag_calibration.py` runs one forced calibration and zips a debug log, the build/model details and a USB trace (including the calibration strips) to attach to an issue.
+
 ## Calibration
 
 The 7600i v1 calibrates live inside every scan, without a cache. Standalone

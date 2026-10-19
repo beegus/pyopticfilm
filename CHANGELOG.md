@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **GL128 AFE field probe** (`tools/probe_afe_fields.py`): stationary lab tool (carriage at home, motor off, calibration cache untouched) that sweeps FE indices (default `0x02` and `0x05`, any of `0x02`–`0x07` via `--fields`) with the lamp on and off and reports whether each behaves as a gain (AD9826 / 6-bit wrap at `0x40`) or an offset. `--layout planar|chunky` overrides the strip decode. Writes a CSV under `tools/scanlab/runs/afe-probe/`.
+- **Calibration diagnostics bundle** (`tools/diag_calibration.py`): runs one forced colour calibration at home (no film, throwaway cache) and writes a zipped folder for bug reports: `info.json` (version, install path, model, exposure, sensor registers, cache version and fingerprint), a full DEBUG log, and a USB trace that includes the AFE and shading strip data. A rejected calibration is logged rather than raised, so the bundle is complete either way. `--resolution` picks the dpi; `--reg ADDR=VALUE` overlays a per-scan sensor register for A/B experiments (this run only); `--fake` runs against mock USB.
 
 ### Fixed
 
