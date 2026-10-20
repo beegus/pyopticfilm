@@ -17,13 +17,16 @@ is logged, not raised, so the bundle is complete either way.
 
 ``--reg ADDR=VALUE`` (repeatable) overlays a register onto the model's
 per-scan sensor registers for this run only, which are written before every
-calibration acquire. Use it for A/B experiments; nothing is persisted.
+calibration acquire. ``--force ADDR=VALUE`` (repeatable) rewrites every write
+to that register on the wire, including ones the driver computes itself (lamp,
+LED, GPO). Use them for A/B experiments; nothing is persisted.
 
 Usage (scanner on, NegPy / other scan apps closed)::
 
     python tools/diag_calibration.py
     python tools/diag_calibration.py --resolution 3600
     python tools/diag_calibration.py --reg 0x36=0x04
+    python tools/diag_calibration.py --force 0x37=0xC0
     python tools/diag_calibration.py --fake 8300i  # mock USB, no hardware
 """
 
@@ -44,7 +47,12 @@ import pyopticfilm
 from pyopticfilm import Scanner
 from pyopticfilm.logging import enable_debug_logging
 from pyopticfilm.scan import calibrate as calib_mod
-from pyopticfilm.usb.protocol import GenesysUsbProtocol
+from pyopticfilm.usb.protocol import (
+    REQUEST_BUFFER,
+    REQUEST_TYPE_OUT,
+    VALUE_SET_REGISTER,
+    GenesysUsbProtocol,
+)
 from pyopticfilm.usb.trace import RecordingTransport, UsbTransaction
 
 FAKE_MODELS = ("8300i", "8200i-se", "8100-v2")
@@ -74,6 +82,42 @@ class PayloadRecorder(RecordingTransport):
         if isinstance(self.sink, JsonlSink):
             self.sink.write_data(data)
         return data
+
+
+class ForcingTransport:
+    """Rewrites register writes to the forced addresses before they reach the device."""
+
+    def __init__(self, inner: Any, forced: dict[int, int]) -> None:
+        self._inner = inner
+        self._forced = forced
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def control_msg(
+        self, request_type: int, request: int, value: int, index: int, data_or_length: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        if (
+            self._forced
+            and request_type == REQUEST_TYPE_OUT
+            and request == REQUEST_BUFFER
+            and (value & 0xFF) == VALUE_SET_REGISTER
+            and isinstance(data_or_length, (bytes, bytearray))
+        ):
+            high = 0x100 if value & 0x100 else 0
+            data = bytearray(data_or_length)
+            for i in range(0, len(data) - 1, 2):
+                forced = self._forced.get(high | data[i])
+                if forced is not None:
+                    data[i + 1] = forced
+            data_or_length = bytes(data)
+        return self._inner.control_msg(request_type, request, value, index, data_or_length, *args, **kwargs)
+
+    def bulk_read(self, size: int, *, timeout_ms: int | None = None) -> bytes:
+        return self._inner.bulk_read(size, timeout_ms=timeout_ms)
+
+    def bulk_write(self, data: bytes | bytearray, *, timeout_ms: int | None = None) -> int:
+        return self._inner.bulk_write(data, timeout_ms=timeout_ms)
 
 
 def _fake_model(name: str) -> Any:
@@ -108,7 +152,13 @@ def with_overrides(model: Any, overrides: dict[int, int]) -> Any:
     return dataclasses.replace(model, sensor_custom_regs=regs)
 
 
-def build_info(model: Any, resolution: int, overrides: dict[int, int], serial: str | None = None) -> dict[str, Any]:
+def build_info(
+    model: Any,
+    resolution: int,
+    overrides: dict[int, int],
+    serial: str | None = None,
+    forced: dict[int, int] | None = None,
+) -> dict[str, Any]:
     sensor = dict(getattr(model, "sensor_custom_regs", None) or {})
     init36 = dict(getattr(model, "init_regs", None) or {}).get(0x36)
     return {
@@ -126,11 +176,20 @@ def build_info(model: Any, resolution: int, overrides: dict[int, int], serial: s
         "calib_cache_version": getattr(calib_mod, "CACHE_VERSION", None),
         "calib_fingerprint": (calib_mod.calib_fingerprint(model) if hasattr(calib_mod, "calib_fingerprint") else None),
         "register_overrides": {f"0x{a:02X}": f"0x{v:02X}" for a, v in sorted(overrides.items())},
+        "forced_registers": {f"0x{a:02X}": f"0x{v:02X}" for a, v in sorted((forced or {}).items())},
         "sensor_custom_regs": {f"0x{a:02X}": f"0x{v:02X}" for a, v in sorted(sensor.items())},
     }
 
 
-def run(out_dir: Path, *, resolution: int, fake: str | None, overrides: dict[int, int]) -> int:
+def run(
+    out_dir: Path,
+    *,
+    resolution: int,
+    fake: str | None,
+    overrides: dict[int, int],
+    forced: dict[int, int] | None = None,
+) -> int:
+    forced = forced or {}
     out_dir.mkdir(parents=True, exist_ok=True)
     enable_debug_logging()
     log = logging.getLogger("pyopticfilm")
@@ -148,7 +207,7 @@ def run(out_dir: Path, *, resolution: int, fake: str | None, overrides: dict[int
 
                 rec = PayloadRecorder(MockScannerTransport(), sink=sink, keep_in_memory=False)
                 model = with_overrides(_fake_model(fake), overrides)
-                scanner = Scanner.open_fake(model, rec, calib_cache=cache)
+                scanner = Scanner.open_fake(model, ForcingTransport(rec, forced), calib_cache=cache)
             else:
                 from pyopticfilm.device.select import model_for_device
                 from pyopticfilm.usb.device import UsbDeviceHandle
@@ -158,8 +217,10 @@ def run(out_dir: Path, *, resolution: int, fake: str | None, overrides: dict[int
                 rec = PayloadRecorder(handle, sink=sink, keep_in_memory=False)
                 detected = model_for_device(handle.info.product_id, getattr(handle.info, "bcd_device", 0))
                 model = with_overrides(detected, overrides)
-                scanner = Scanner(handle, GenesysUsbProtocol(rec), model=model, calib_cache=cache)
-            info = build_info(scanner.model, resolution, overrides, serial)
+                scanner = Scanner(
+                    handle, GenesysUsbProtocol(ForcingTransport(rec, forced)), model=model, calib_cache=cache
+                )
+            info = build_info(scanner.model, resolution, overrides, serial, forced)
             (out_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
             print(json.dumps(info, indent=2))
             try:
@@ -200,9 +261,17 @@ def main(argv: list[str] | None = None) -> int:
         metavar="ADDR=VALUE",
         help="overlay a per-scan sensor register for this run (repeatable), e.g. 0x36=0x04",
     )
+    parser.add_argument(
+        "--force",
+        type=parse_reg,
+        action="append",
+        default=[],
+        metavar="ADDR=VALUE",
+        help="rewrite every write to this register on the wire (repeatable), e.g. 0x37=0xC0",
+    )
     args = parser.parse_args(argv)
     out = args.out or Path.cwd() / f"pyopticfilm-diag-{datetime.now().astimezone():%Y%m%d-%H%M%S}"
-    return run(out, resolution=args.resolution, fake=args.fake, overrides=dict(args.reg))
+    return run(out, resolution=args.resolution, fake=args.fake, overrides=dict(args.reg), forced=dict(args.force))
 
 
 if __name__ == "__main__":

@@ -28,7 +28,8 @@ logger = get_logger(__name__)
 CACHE_IDENT = "pyopticfilm"
 #: v10: GL128 ``afe_gains`` / ``afe_offsets`` hold 0x02-0x04 / 0x05-0x07 (were swapped).
 #: v11: entries carry a model/exposure/sensor-register ``fingerprint``.
-CACHE_VERSION = 11
+#: v12: GL128 colour calibration runs with ``0x37=0xC0`` (was the ``0xB0`` readback).
+CACHE_VERSION = 12
 DARK_SETTLE_S = 0.2
 WHITE_SETTLE_S = 0.5
 

@@ -630,8 +630,7 @@ class Gl128Common:
 #: differ only in ``0x36``. :data:`INIT_REGS` is the ``-20241113`` set (every
 #: captured unit reports this string).
 GL128_FIRMWARE_CURRENT = "20241113"
-#: ``0x36`` from the plain register set. Older-firmware units driven with
-#: ``0x1C`` read ~1.5x hotter and clip the white shading strip.
+#: ``0x36`` from the plain register set.
 GL128_REG36_LEGACY_FIRMWARE = 0x04
 
 

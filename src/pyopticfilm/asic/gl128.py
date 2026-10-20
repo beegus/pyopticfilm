@@ -1264,8 +1264,12 @@ class Gl128:
         r = self.registers
         if enabled:
             self._update_bits(r.REG_IR, set_bits=r.IR_LED)
-        else:
+        elif self._scan_method == "infrared":
             self._update_bits(r.REG_IR, clear_bits=r.IR_LED)
+        else:
+            # 0x37 reads back 0xB0 after the boot write of 0xC0; writing that back
+            # reads ~1.5x hotter. The vendor holds 0xC0 for all colour work.
+            self._write(r.REG_IR, int(self.model.init_regs.get(r.REG_IR, 0xC0)))
 
     def lamp_on(self) -> None:
         """Power the lamp for the selected method.

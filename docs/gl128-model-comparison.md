@@ -696,6 +696,16 @@ with the 8300i values its AFE search landed next to SilverFast's own gains.
 Other units ([#79](https://github.com/jboneng/pyopticfilm/issues/79)) had
 enough headroom to scan on the SE values.
 
+**`0x37` for colour (all GL128 models).** The vendor writes `0x37=0xC0` for the
+whole colour calibration and the colour image, `0xB4` for IR and `0xF0` for the
+IR dark strip. The register reads back `0xB0` after the boot write of `0xC0`.
+pyopticfilm used to clear the IR bit with a read-modify-write, which left colour
+at `0xB0`. On a failing 8300i unit, SilverFast's first AFE probe (gain 0, offset
+`0x80`, `0x37=0xC0`) read 24326 / 32312 / 27550, and pyopticfilm's read 1.54x
+higher with every other register equal except `0xA3` and the `0x28`–`0x2B` SDRAM
+block. Those last two made no level difference between pyopticfilm's own wide and
+white strips. Colour now writes `0xC0`.
+
 **Firmware-dependent `0x36` (all GL128 models).** At open the vendor driver
 reads the USB serial-number string (`iSerialNumber`, descriptor index 12), which
 GL128 firmware sets to its build date. For `20241113` it loads the registry set
@@ -704,11 +714,10 @@ GL128 firmware sets to its build date. For `20241113` it loads the registry set
 for `-20241113` and `0x04` for the plain set (vendor registry dumps for the 8200i SE,
 8100 and 8300i; the date strings and the `PID_%04x-%s` key format are in
 `Scndrvu_x64.drv`). Every captured unit (8200i SE, 8100 V2, 8300i SE) reports
-`20241113`, so `INIT_REGS` has `0x1C`. A second 8300i tester's unit on the
-`0x1C` set read 1.53–1.59x hotter than the captures unit in all three channels
-and rejected the white strip even at the lowest PGA gain. The driver now
-uses `0x04` when the serial string is readable and is not `20241113`
-(`gl128_firmware_variant`). The bit-level meaning of `0x36` is unknown.
+`20241113`, so `INIT_REGS` has `0x1C`. The driver uses `0x04` when the serial
+string is readable and is not `20241113` (`gl128_firmware_variant`). The
+bit-level meaning of `0x36` is unknown: on a `20241113` 8300i unit, forcing
+`0x04` before every acquire left the AFE probe and strip levels unchanged.
 
 The IR AFE sequence has the same shape as colour on both IR models (probe at
 gains 0 / offsets `0x80` and `0xFF`, one wide 62268-byte strip, then coarse
