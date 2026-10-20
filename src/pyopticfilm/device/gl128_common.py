@@ -14,7 +14,7 @@ Adding a field to :class:`Gl128Common` without listing it in
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any
 
 from pyopticfilm.device.protocol import DEFAULT_GL845_MOTOR, MotorProfile
@@ -622,3 +622,29 @@ class Gl128Common:
         regs = dict(self.init_regs)
         regs.update(self.memory_layout_regs)
         return regs
+
+
+#: USB serial-number string (``iSerialNumber``) of current GL128 firmware. The
+#: vendor driver loads its ``VID_07b3&PID_xxxx-20241113`` register set for this
+#: string and the plain ``VID_07b3&PID_xxxx`` set for anything else; the two sets
+#: differ only in ``0x36``. :data:`INIT_REGS` is the ``-20241113`` set (every
+#: captured unit reports this string).
+GL128_FIRMWARE_CURRENT = "20241113"
+#: ``0x36`` from the plain register set. Older-firmware units driven with
+#: ``0x1C`` read ~1.5x hotter and clip the white shading strip.
+GL128_REG36_LEGACY_FIRMWARE = 0x04
+
+
+def gl128_firmware_variant(model: Any, firmware: str | None) -> Any:
+    """Return ``model`` with the vendor's per-firmware ``0x36`` for this unit.
+
+    ``firmware`` is the USB serial-number string. ``None`` (not readable) keeps
+    the model unchanged; non-GL128 models are always returned unchanged.
+    """
+    if not isinstance(model, Gl128Common) or firmware is None:
+        return model
+    if firmware.strip() == GL128_FIRMWARE_CURRENT:
+        return model
+    regs = dict(model.init_regs)
+    regs[0x36] = GL128_REG36_LEGACY_FIRMWARE
+    return replace(model, init_regs=regs)

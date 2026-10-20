@@ -57,13 +57,16 @@ def default_cache_path() -> Path:
 def calib_fingerprint(model: object) -> str:
     """Hash of what a cached table depends on besides the scan window.
 
-    Model identity, exposure and the per-scan sensor registers: a table measured
-    under different values reads at a different level and must not be reused.
+    Model identity, exposure, the boot registers and the per-scan sensor
+    registers: a table measured under different values reads at a different
+    level and must not be reused.
     """
     sensor = dict(getattr(model, "sensor_custom_regs", None) or {})
+    init = dict(getattr(model, "init_regs", None) or {})
     parts = {
         "name": str(getattr(model, "name", "")),
         "exposure": [getattr(model, "exposure_lperiod", None), getattr(model, "exposure_short", None)],
+        "init": sorted((int(a), int(v)) for a, v in init.items()),
         "sensor": sorted((int(a), int(v)) for a, v in sensor.items()),
     }
     digest = hashlib.sha1(json.dumps(parts, sort_keys=True).encode("utf-8"), usedforsecurity=False)

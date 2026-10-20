@@ -690,11 +690,25 @@ and colour passes, and differ from the SE/V2 `SCAN_REGS` (SE sessions 04,
 `0x36` stays `0x1C` on both (boot and scan). An independent USBPcap set from
 another 8300i unit (SilverFast 9 HDRi and VueScan 9.8.44,
 [NegPy #1444](https://github.com/marcinz606/NegPy/issues/1444)) shows the same
-values. Under the SE values that unit's colour white strip read ~2.3x hotter
+timing values but boots with `0x36=0x04`; see the firmware note below. Under the SE values that unit's colour white strip read ~2.3x hotter
 than SilverFast at the same exposure and clipped (~92 % of samples ≥ 65000);
 with the 8300i values its AFE search landed next to SilverFast's own gains.
 Other units ([#79](https://github.com/jboneng/pyopticfilm/issues/79)) had
 enough headroom to scan on the SE values.
+
+**Firmware-dependent `0x36` (all GL128 models).** At open the vendor driver
+reads the USB serial-number string (`iSerialNumber`, descriptor index 12), which
+GL128 firmware sets to its build date. For `20241113` it loads the registry set
+`VID_07b3&PID_xxxx-20241113`; for anything else it loads the plain
+`VID_07b3&PID_xxxx` set. The two differ only in boot register `0x36`: `0x1C`
+for `-20241113` and `0x04` for the plain set (vendor registry dumps for the 8200i SE,
+8100 and 8300i; the date strings and the `PID_%04x-%s` key format are in
+`Scndrvu_x64.drv`). Every captured unit (8200i SE, 8100 V2, 8300i SE) reports
+`20241113`, so `INIT_REGS` has `0x1C`. A second 8300i tester's unit on the
+`0x1C` set read 1.53–1.59x hotter than the captures unit in all three channels
+and rejected the white strip even at the lowest PGA gain. The driver now
+uses `0x04` when the serial string is readable and is not `20241113`
+(`gl128_firmware_variant`). The bit-level meaning of `0x36` is unknown.
 
 The IR AFE sequence has the same shape as colour on both IR models (probe at
 gains 0 / offsets `0x80` and `0xFF`, one wide 62268-byte strip, then coarse

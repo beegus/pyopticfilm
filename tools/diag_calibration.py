@@ -108,8 +108,9 @@ def with_overrides(model: Any, overrides: dict[int, int]) -> Any:
     return dataclasses.replace(model, sensor_custom_regs=regs)
 
 
-def build_info(model: Any, resolution: int, overrides: dict[int, int]) -> dict[str, Any]:
+def build_info(model: Any, resolution: int, overrides: dict[int, int], serial: str | None = None) -> dict[str, Any]:
     sensor = dict(getattr(model, "sensor_custom_regs", None) or {})
+    init36 = dict(getattr(model, "init_regs", None) or {}).get(0x36)
     return {
         "created": datetime.now().astimezone().isoformat(timespec="seconds"),
         "pyopticfilm_version": pyopticfilm.__version__,
@@ -118,6 +119,8 @@ def build_info(model: Any, resolution: int, overrides: dict[int, int]) -> dict[s
         "platform": sys.platform,
         "model": getattr(model, "model", str(model)),
         "asic": getattr(model, "asic", None),
+        "usb_serial_number": serial,
+        "init_reg_0x36": None if init36 is None else f"0x{init36:02X}",
         "exposure_short": getattr(model, "exposure_short", None),
         "resolution": resolution,
         "calib_cache_version": getattr(calib_mod, "CACHE_VERSION", None),
@@ -139,6 +142,7 @@ def run(out_dir: Path, *, resolution: int, fake: str | None, overrides: dict[int
     try:
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "calib.json"
+            serial = None
             if fake:
                 from pyopticfilm.usb.fake import MockScannerTransport
 
@@ -150,11 +154,12 @@ def run(out_dir: Path, *, resolution: int, fake: str | None, overrides: dict[int
                 from pyopticfilm.usb.device import UsbDeviceHandle
 
                 handle = UsbDeviceHandle.open(None)
+                serial = getattr(handle.info, "serial_number", None)
                 rec = PayloadRecorder(handle, sink=sink, keep_in_memory=False)
                 detected = model_for_device(handle.info.product_id, getattr(handle.info, "bcd_device", 0))
                 model = with_overrides(detected, overrides)
                 scanner = Scanner(handle, GenesysUsbProtocol(rec), model=model, calib_cache=cache)
-            info = build_info(scanner.model, resolution, overrides)
+            info = build_info(scanner.model, resolution, overrides, serial)
             (out_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
             print(json.dumps(info, indent=2))
             try:

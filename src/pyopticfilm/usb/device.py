@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
@@ -76,6 +77,9 @@ class UsbDeviceInfo:
     manufacturer: str | None = None
     product: str | None = None
     bcd_device: int = 0
+    #: ``iSerialNumber`` string, read on open. GL128 firmware reports its build
+    #: date here (e.g. ``20241113``).
+    serial_number: str | None = None
 
     @property
     def device_id(self) -> str:
@@ -185,6 +189,22 @@ def _info_from_pyusb(dev, usb_util, *, read_strings: bool = False) -> UsbDeviceI
         product=product,
         bcd_device=bcd,
     )
+
+
+def _read_serial_number(dev, usb_util) -> str | None:
+    """``iSerialNumber`` of an opened device, or ``None`` if absent or unreadable."""
+    index = int(getattr(dev, "iSerialNumber", 0) or 0)
+    if not index:
+        return None
+    # The vendor driver asks with LANGID 0; try the normal LANGID lookup first.
+    for langid in (None, 0x0409, 0):
+        try:
+            text = usb_util.get_string(dev, index, langid)
+        except (ValueError, OSError, NotImplementedError):
+            continue
+        if text:
+            return str(text).strip()
+    return None
 
 
 def list_devices(*, read_strings: bool = False) -> list[UsbDeviceInfo]:
@@ -375,12 +395,16 @@ class UsbDeviceHandle:
             self._dev = dev
             self._claimed = True
             self._needs_usb_reset = False
+            self.info = dataclasses.replace(
+                self.info, serial_number=_read_serial_number(dev, usb_util)
+            )
             logger.info(
-                "Opened %s (iface=%s ep_in=%s ep_out=%s)",
+                "Opened %s (iface=%s ep_in=%s ep_out=%s serial=%r)",
                 self.info.device_id,
                 self._interface,
                 None if self._ep_in is None else hex(self._ep_in.bEndpointAddress),
                 None if self._ep_out is None else hex(self._ep_out.bEndpointAddress),
+                self.info.serial_number,
             )
         except (DriverBindingError, DeviceNotFoundError, UnsupportedDeviceError):
             self.close()

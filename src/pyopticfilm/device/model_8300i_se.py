@@ -53,7 +53,8 @@ from pyopticfilm.device.tables_8300i_se import SLOPE_TABLE_FAST, SLOPE_TABLE_SLO
 # Per-scan sensor/AFE timing overlay. SilverFast writes these before every AFE,
 # shading and image acquire at every measured PPI, IR included (docs §10.7).
 # Under the SE/V2 values (``SCAN_REGS``) the colour white strip reads ~2x hotter
-# and rails on some units. ``0x36`` stays at the shared 0x1C.
+# and rails on some units. ``0x36`` is a boot register chosen per firmware
+# (:func:`~pyopticfilm.device.gl128_common.gl128_firmware_variant`).
 _SCAN_REGS_8300I: dict[int, int] = {
     **SCAN_REGS,
     0x06: 0x10,
