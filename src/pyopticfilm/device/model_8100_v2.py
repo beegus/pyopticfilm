@@ -182,8 +182,10 @@ class Model8100V2(Gl128Common):
     )
     dummy_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(DUMMY_BY_DPI))
     sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
-    # 02_cold_boot_open.pcapng: 0x8C[0x10] = 0x8C[0x13] = 0x0E (SE: 0x0C).
-    asic_clock_0x8c: int = 0x0E
+    # 02_cold_boot_open / 03_prescan / 05_midtravel_home: 0x8C[0x10] = 0x8C[0x13]
+    # = 0x0E at boot, 0x0C before the scan session (SE: 0x0C for both).
+    asic_clock_boot_0x8c: int = 0x0E
+    asic_clock_scan_0x8c: int = 0x0C
 
     def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
         """Return ``(dummy, clk_a, clk_b)`` for a shading strip.

@@ -1229,9 +1229,7 @@ class Gl128:
         self.protocol.write_ahb(_BOOT_BLOB_ADDR_A, _BOOT_BLOB_A)
         self.protocol.write_ahb(_BOOT_BLOB_ADDR_B, _BOOT_BLOB_B)
         self._write_many(dict(self.model.init_regs))
-        clock = int(self.model.asic_clock_0x8c)
-        self.protocol.write_0x8c(0x10, clock)
-        self.protocol.write_0x8c(0x13, clock)
+        self._write_clock(int(self.model.asic_clock_boot_0x8c))
         self._write_many(dict(self.model.memory_layout_regs))
         self.set_frontend_init()
         self._write_many(dict(self.model.gpo_regs))
@@ -1241,6 +1239,24 @@ class Gl128:
             len(self.model.memory_layout_regs),
             len(self.model.gpo_regs),
         )
+
+    def _write_clock(self, value: int) -> None:
+        self.protocol.write_0x8c(0x10, value)
+        self.protocol.write_0x8c(0x13, value)
+
+    def enter_scan_clock(self) -> None:
+        """Switch to the scan clock the way the vendor opens every scan pass.
+
+        The boot value goes out first, then the scan value (8300i SE:
+        ``0x0E`` then ``0x0D``). Calibration and image both run on it.
+        """
+        if not self._initialized:
+            self.init()
+        boot = int(self.model.asic_clock_boot_0x8c)
+        scan = int(self.model.asic_clock_scan_0x8c)
+        self._write_clock(boot)
+        self._write_clock(scan)
+        logger.debug("GL128 scan clock 0x8C: %#04x -> %#04x", boot, scan)
 
     def init(self, *, force: bool = False) -> None:
         if self._initialized and not force:

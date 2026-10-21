@@ -270,7 +270,8 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "pixel_clock_long_by_dpi",
         "dummy_by_dpi",
         "sensor_custom_regs",
-        "asic_clock_0x8c",
+        "asic_clock_boot_0x8c",
+        "asic_clock_scan_0x8c",
     }
 )
 

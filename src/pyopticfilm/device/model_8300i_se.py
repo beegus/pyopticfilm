@@ -238,9 +238,11 @@ class Model8300iSE(Gl128Common):
     sensor_custom_regs: Mapping[int, int] = field(
         default_factory=lambda: dict(_SCAN_REGS_8300I)
     )
-    # Plug-in and full-frame captures: 0x8C[0x10] = 0x8C[0x13] = 0x0E (SE: 0x0C).
-    # Left unset, the clock keeps whatever the scanner powered up with.
-    asic_clock_0x8c: int = 0x0E
+    # Every capture: 0x8C[0x10] = 0x8C[0x13] = 0x0E at boot, then 0x0E and 0x0D
+    # before each scan pass. Scanning at 0x0E runs the motor fast, rattles and
+    # stalls mid-pass; left unset, the clock keeps its power-on value.
+    asic_clock_boot_0x8c: int = 0x0E
+    asic_clock_scan_0x8c: int = 0x0D
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False

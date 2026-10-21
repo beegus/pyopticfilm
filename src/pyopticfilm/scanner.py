@@ -237,6 +237,7 @@ class Scanner:
         try:
             if getattr(self._model, "asic", "") == "GL128":
                 self.disarm_bringup_motor()
+                self._asic.enter_scan_clock()
             return self._calibrator.run(
                 resolution=resolution,
                 mode=mode,

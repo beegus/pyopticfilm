@@ -696,18 +696,47 @@ with the 8300i values its AFE search landed next to SilverFast's own gains.
 Other units ([#79](https://github.com/jboneng/pyopticfilm/issues/79)) had
 enough headroom to scan on the SE values.
 
-**Boot clock `0x8C` (all GL128 models).** Right after the 116-register boot
-blast the vendor sends two `REQUEST_REGISTER` / `VALUE_BUF_ENDACCESS` writes
-(SANE `write_0x8c`) to indices `0x10` and `0x13`, both with the same value:
-`0x0C` on the 8200i SE, `0x0E` on the 8100 V2 and 8300i SE. This matches the
-registry `SYSTEMCLOCK` (40 on the SE, 60 on the 8300i). pyopticfilm never sent
-them, so the clock kept whatever the scanner powered up with (or whatever
-SilverFast last set). On a failing 8300i unit, SilverFast's first AFE probe (gain 0,
+**Clock `0x8C` (all GL128 models).** The vendor sends
+`REQUEST_REGISTER` / `VALUE_BUF_ENDACCESS` writes (SANE `write_0x8c`) to
+indices `0x10` and `0x13`, both with the same value, at two points:
+
+| | Boot (after the 116-register blast) | Before every scan pass |
+|---|---|---|
+| 8200i SE | `0x0C` | `0x0C`, then `0x0C` |
+| 8100 V2 | `0x0E` | `0x0E`, then `0x0C` |
+| 8300i SE | `0x0E` | `0x0E`, then `0x0D` |
+
+Before each pass (colour, IR, ME) the boot value goes out, then lamp toggles
+on `0x03` and `0x33` writes, then the scan value, then the full register
+reprogram and AFE init, so calibration and image both run on the scan value.
+Sources: all 8200i SE sessions; V2 `02_cold_boot_open`, `03_prescan` and
+`05_midtravel_home`; every 8300i SE full-frame capture. pyopticfilm sends the
+boot value in `asic_boot` and the boot-then-scan pair in
+`Gl128.enter_scan_clock()` before each pass and before `Scanner.calibrate`. The
+lamp and `0x33` writes in between are not replicated.
+
+Scanning an 8300i SE at `0x0E` calibrates and images normally, but the motor
+runs fast with a lower pitch and a rattle, and the carriage stalls for a few
+seconds about 60 % into each pass. Reporter measurements at 3600 dpi on the
+#95 unit (same host code, only the clock changed):
+
+| Clock | 28292-step feed | 13128-step feed | Pass |
+|---|---|---|---|
+| `0x0E` | 1.01 s | 1.28 s | 29 s, stalls |
+| after SilverFast | 1.25 s | 1.57 s | 30 s, clean |
+| `0x0D` | 1.22–1.28 s | 1.54–1.59 s | 30 s, clean |
+| `0x0C` | 1.46 s | 1.89 s | 36 s |
+
+Image levels were the same at all three values.
+
+Before any of this, pyopticfilm never sent `0x8C`, so the clock kept whatever
+the scanner powered up with (or whatever SilverFast last set). On a failing 8300i unit, SilverFast's first AFE probe (gain 0,
 offset `0x80`) read 24326 / 32312 / 27550, and pyopticfilm's read 1.54x higher with
 every register, frontend value and RAM upload equal apart from `0x37`, `0xA3`,
 the `0x28`–`0x2B` SDRAM block and the per-channel exposure tables at
 `0x10000000`/`0x10004000`/`0x10008000` (both about 15000). `0x8C` was the only
-vendor boot write pyopticfilm skipped. The boot now sends `asic_clock_0x8c`.
+vendor boot write pyopticfilm skipped. Sending any of the three values cured the
+clipping on the reporter's unit.
 
 **`0x37` for colour (all GL128 models).** The vendor writes `0x37=0xC0` for the
 whole colour calibration and the colour image, `0xB4` for IR and `0xF0` for the

@@ -30,7 +30,8 @@ CACHE_IDENT = "pyopticfilm"
 #: v11: entries carry a model/exposure/sensor-register ``fingerprint``.
 #: v12: GL128 colour calibration runs with ``0x37=0xC0`` (was the ``0xB0`` readback).
 #: v13: GL128 boot sets the ASIC clock (``0x8C``); older tables ran on the power-on clock.
-CACHE_VERSION = 13
+#: v14: GL128 calibrates on the per-model scan clock (8300i SE ``0x0D``, V2 ``0x0C``).
+CACHE_VERSION = 14
 DARK_SETTLE_S = 0.2
 WHITE_SETTLE_S = 0.5
 
@@ -69,7 +70,10 @@ def calib_fingerprint(model: object) -> str:
         "name": str(getattr(model, "name", "")),
         "exposure": [getattr(model, "exposure_lperiod", None), getattr(model, "exposure_short", None)],
         "init": sorted((int(a), int(v)) for a, v in init.items()),
-        "clock": getattr(model, "asic_clock_0x8c", None),
+        "clock": [
+            getattr(model, "asic_clock_boot_0x8c", None),
+            getattr(model, "asic_clock_scan_0x8c", None),
+        ],
         "sensor": sorted((int(a), int(v)) for a, v in sensor.items()),
     }
     digest = hashlib.sha1(json.dumps(parts, sort_keys=True).encode("utf-8"), usedforsecurity=False)

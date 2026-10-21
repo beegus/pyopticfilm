@@ -186,6 +186,7 @@ class Gl128ScanSession(ScanSession):
                 n_passes=n_passes,
                 **kwargs,
             )
+        self.asic.enter_scan_clock()
         if single_pass_exposure is None:
             # No override: identical to today's model-derived single pass.
             return super().run(*args, **kwargs)
@@ -485,6 +486,7 @@ class Gl128ScanSession(ScanSession):
                 if progress is not None:
                     progress(min(1.0, (_i + p) / n_pass))
 
+            self.asic.enter_scan_clock()
             calib = None
             if apply_calib and self.calibrator is not None:
                 if method == "transparency":
