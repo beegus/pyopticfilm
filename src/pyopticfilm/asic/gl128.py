@@ -1229,6 +1229,9 @@ class Gl128:
         self.protocol.write_ahb(_BOOT_BLOB_ADDR_A, _BOOT_BLOB_A)
         self.protocol.write_ahb(_BOOT_BLOB_ADDR_B, _BOOT_BLOB_B)
         self._write_many(dict(self.model.init_regs))
+        clock = int(self.model.asic_clock_0x8c)
+        self.protocol.write_0x8c(0x10, clock)
+        self.protocol.write_0x8c(0x13, clock)
         self._write_many(dict(self.model.memory_layout_regs))
         self.set_frontend_init()
         self._write_many(dict(self.model.gpo_regs))
@@ -1267,8 +1270,8 @@ class Gl128:
         elif self._scan_method == "infrared":
             self._update_bits(r.REG_IR, clear_bits=r.IR_LED)
         else:
-            # 0x37 reads back 0xB0 after the boot write of 0xC0; writing that back
-            # reads ~1.5x hotter. The vendor holds 0xC0 for all colour work.
+            # 0x37 reads back 0xB0 after the boot write of 0xC0; the vendor
+            # holds 0xC0 for all colour work rather than rewriting the readback.
             self._write(r.REG_IR, int(self.model.init_regs.get(r.REG_IR, 0xC0)))
 
     def lamp_on(self) -> None:

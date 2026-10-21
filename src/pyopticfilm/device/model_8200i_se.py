@@ -126,6 +126,9 @@ class Model8200iSE(Gl128Common):
     )
     dummy_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(DUMMY_BY_DPI))
     sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
+    #: Boot clock written through ``0x8C`` to indices ``0x10`` and ``0x13``
+    #: (session 02 cold boot). The 8100 V2 and 8300i SE use ``0x0E``.
+    asic_clock_0x8c: int = 0x0C
 
     def scaled_ld_shift(self, ld: int, asic_dpi: int) -> int:
         """Round line-distance shifts (floor left ~0.8 G / ~0.6 B at 1440)."""

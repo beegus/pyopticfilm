@@ -696,15 +696,25 @@ with the 8300i values its AFE search landed next to SilverFast's own gains.
 Other units ([#79](https://github.com/jboneng/pyopticfilm/issues/79)) had
 enough headroom to scan on the SE values.
 
+**Boot clock `0x8C` (all GL128 models).** Right after the 116-register boot
+blast the vendor sends two `REQUEST_REGISTER` / `VALUE_BUF_ENDACCESS` writes
+(SANE `write_0x8c`) to indices `0x10` and `0x13`, both with the same value:
+`0x0C` on the 8200i SE, `0x0E` on the 8100 V2 and 8300i SE. This matches the
+registry `SYSTEMCLOCK` (40 on the SE, 60 on the 8300i). pyopticfilm never sent
+them, so the clock kept whatever the scanner powered up with (or whatever
+SilverFast last set). On a failing 8300i unit, SilverFast's first AFE probe (gain 0,
+offset `0x80`) read 24326 / 32312 / 27550, and pyopticfilm's read 1.54x higher with
+every register, frontend value and RAM upload equal apart from `0x37`, `0xA3`,
+the `0x28`–`0x2B` SDRAM block and the per-channel exposure tables at
+`0x10000000`/`0x10004000`/`0x10008000` (both about 15000). `0x8C` was the only
+vendor boot write pyopticfilm skipped. The boot now sends `asic_clock_0x8c`.
+
 **`0x37` for colour (all GL128 models).** The vendor writes `0x37=0xC0` for the
 whole colour calibration and the colour image, `0xB4` for IR and `0xF0` for the
 IR dark strip. The register reads back `0xB0` after the boot write of `0xC0`.
 pyopticfilm used to clear the IR bit with a read-modify-write, which left colour
-at `0xB0`. On a failing 8300i unit, SilverFast's first AFE probe (gain 0, offset
-`0x80`, `0x37=0xC0`) read 24326 / 32312 / 27550, and pyopticfilm's read 1.54x
-higher with every other register equal except `0xA3` and the `0x28`–`0x2B` SDRAM
-block. Those last two made no level difference between pyopticfilm's own wide and
-white strips. Colour now writes `0xC0`.
+at `0xB0`. Colour now writes `0xC0`. On the failing 8300i unit this alone did
+not change the white level.
 
 **Firmware-dependent `0x36` (all GL128 models).** At open the vendor driver
 reads the USB serial-number string (`iSerialNumber`, descriptor index 12), which
