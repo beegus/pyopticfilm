@@ -243,6 +243,8 @@ class Model8300iSE(Gl128Common):
     # stalls mid-pass; left unset, the clock keeps its power-on value.
     asic_clock_boot_0x8c: int = 0x0E
     asic_clock_scan_0x8c: int = 0x0D
+    # Plug-in capture: 0x0B = 0x84, 0x13 = 0x0F, 0x0B = 0x8C after the boot clock.
+    asic_boot_0x0b: int = 0x8C
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False

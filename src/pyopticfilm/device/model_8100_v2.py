@@ -186,6 +186,8 @@ class Model8100V2(Gl128Common):
     # = 0x0E at boot, 0x0C before the scan session (SE: 0x0C for both).
     asic_clock_boot_0x8c: int = 0x0E
     asic_clock_scan_0x8c: int = 0x0C
+    # 03_prescan: 0x0B = 0x84, 0x13 = 0x0F, 0x0B = 0x8C after the boot clock.
+    asic_boot_0x0b: int = 0x8C
 
     def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
         """Return ``(dummy, clk_a, clk_b)`` for a shading strip.

@@ -715,6 +715,16 @@ boot value in `asic_boot` and the boot-then-scan pair in
 `Gl128.enter_scan_clock()` before each pass and before `Scanner.calibrate`. The
 lamp and `0x33` writes in between are not replicated.
 
+`0x0B` moves with the clock. Its top bits follow `0x8C` in every capture
+(`0x0C` with `0x4_`, `0x0D` with `0x6_`, `0x0E` with `0x8_`) and bit 3 enables
+DRAM. After the boot clock the vendor writes `0x0B` with DRAM off, `0x13=0x0F`,
+then `0x0B` with DRAM on (8200i SE `0x44`/`0x4C`, V2 and 8300i SE `0x84`/`0x8C`,
+model field `asic_boot_0x0b`). The register blast after each per-pass clock
+switch carries `0x0B` at its scan value (`0x4C` SE/V2, `0x6C` 8300i SE) and
+`0x13=0x08`; `enter_scan_clock()` writes those two right after the switch.
+A build that changed the clock without them stalled every few seconds with a
+rattling motor on an 8200i SE at 7200 dpi.
+
 Scanning an 8300i SE at `0x0E` calibrates and images normally, but the motor
 runs fast with a lower pitch and a rattle, and the carriage stalls for a few
 seconds about 60 % into each pass. Reporter measurements at 3600 dpi on the

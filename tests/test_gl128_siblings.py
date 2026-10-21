@@ -86,6 +86,9 @@ def test_divergent_fields_match_capture_catalog():
     assert (MODEL_8200I_SE.asic_clock_boot_0x8c, MODEL_8200I_SE.asic_clock_scan_0x8c) == (0x0C, 0x0C)
     assert (MODEL_8100_V2.asic_clock_boot_0x8c, MODEL_8100_V2.asic_clock_scan_0x8c) == (0x0E, 0x0C)
     assert (MODEL_8300I_SE.asic_clock_boot_0x8c, MODEL_8300I_SE.asic_clock_scan_0x8c) == (0x0E, 0x0D)
+    assert MODEL_8200I_SE.asic_boot_0x0b == 0x4C
+    assert MODEL_8100_V2.asic_boot_0x0b == 0x8C
+    assert MODEL_8300I_SE.asic_boot_0x0b == 0x8C
     assert MODEL_8300I_SE.dummy_by_dpi[7200] == 0x1F
     assert MODEL_8300I_SE.pixel_clock_by_dpi[2400] == 0x05
     assert MODEL_8300I_SE.shading_strip_clocks(7200, dvdset=True) == (0x26, 0x02, 0x02)

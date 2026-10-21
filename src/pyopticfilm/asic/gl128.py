@@ -167,6 +167,15 @@ _BOOT_BLOB_ADDR_B = 0x000FFF01
 _BOOT_BLOB_A = bytes(34)
 _BOOT_BLOB_B = bytes(32) + bytes((0x33, 0x00))
 
+#: ``0x0B`` top bits select the clock and must agree with ``0x8C``; bit 3
+#: enables DRAM. After the boot clock the vendor toggles DRAM enable off and on
+#: with ``0x13=0x0F`` in between, and the next register blast puts ``0x13``
+#: back to its boot value.
+_REG_CLK_DRAM = 0x0B
+_DRAM_ENABLE = 0x08
+_REG_0x13 = 0x13
+_DRAM_INIT_0x13 = 0x0F
+
 #: Image cancel / end-scan lamp writes on ``0x03`` (sessions 03 return-home,
 #: 08b/08c Cancel). Pre-clear pair, then clear ``SCAN`` to ``0x22``, then post.
 _CANCEL_LAMP_PRE: tuple[int, ...] = (0x30, 0x20)
@@ -1230,6 +1239,10 @@ class Gl128:
         self.protocol.write_ahb(_BOOT_BLOB_ADDR_B, _BOOT_BLOB_B)
         self._write_many(dict(self.model.init_regs))
         self._write_clock(int(self.model.asic_clock_boot_0x8c))
+        dram = int(self.model.asic_boot_0x0b)
+        self._write(_REG_CLK_DRAM, dram & ~_DRAM_ENABLE)
+        self._write(_REG_0x13, _DRAM_INIT_0x13)
+        self._write(_REG_CLK_DRAM, dram | _DRAM_ENABLE)
         self._write_many(dict(self.model.memory_layout_regs))
         self.set_frontend_init()
         self._write_many(dict(self.model.gpo_regs))
@@ -1248,7 +1261,9 @@ class Gl128:
         """Switch to the scan clock the way the vendor opens every scan pass.
 
         The boot value goes out first, then the scan value (8300i SE:
-        ``0x0E`` then ``0x0D``). Calibration and image both run on it.
+        ``0x0E`` then ``0x0D``), then ``0x0B`` and ``0x13`` at their scan
+        values as in the vendor's following register blast. Calibration and
+        image both run on it.
         """
         if not self._initialized:
             self.init()
@@ -1256,6 +1271,8 @@ class Gl128:
         scan = int(self.model.asic_clock_scan_0x8c)
         self._write_clock(boot)
         self._write_clock(scan)
+        self._write(_REG_CLK_DRAM, int(self.model.sensor_custom_regs[_REG_CLK_DRAM]))
+        self._write(_REG_0x13, int(self.model.init_regs[_REG_0x13]))
         logger.debug("GL128 scan clock 0x8C: %#04x -> %#04x", boot, scan)
 
     def init(self, *, force: bool = False) -> None:

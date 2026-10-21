@@ -144,6 +144,7 @@ class Gl128Model(FilmModel, Protocol):
     max_image_lincnt_by_feed2: Mapping[int, int]
     asic_clock_boot_0x8c: int
     asic_clock_scan_0x8c: int
+    asic_boot_0x0b: int
     ladder_feed2_steps: int
     ladder_lincnt_by_dpi: Mapping[int, int]
 
