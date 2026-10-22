@@ -190,6 +190,9 @@ class Model8100V2(Gl128Common):
     asic_boot_0x0b: int = 0x8C
     #: 04_color_7200: SilverFast uploads 28000 per channel with REG_EXPOSURE 14000.
     native_image_exposure_factor: int = 2
+    image_read_chunk_bytes: int = 0xF000
+    usb_image_lincnt_half_lines: bool = True
+    image_lincnt_per_line: int = 4
 
     def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
         """Return ``(dummy, clk_a, clk_b)`` for a shading strip.

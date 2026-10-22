@@ -14,6 +14,49 @@ These are **not** the 8200i SE tables in :mod:`tables_8200i_se` (heads
 
 from __future__ import annotations
 
+import math
+
+#: Entries per AHB scan motor table (512-byte window of 16-bit words).
+SCAN_MOTOR_TABLE_LENGTH = 256
+
+
+def _vendor_scan_ramp(
+    start_pct: int = 10, vmax: int = 2500, shape: int = 240, shift: int = 2, tick_hz: int = 4_000_000
+) -> tuple[int, ...]:
+    """Step periods of the vendor driver's analytic acceleration curve.
+
+    Registry ``Motor\\CURVE = 10,2500,240`` with motor shift 2 (``0xA0 = 0x12``)
+    and a 250 ns tick (``0x06 = 0x10``, 48 MHz system clock): ``rate[i] =
+    (vmax << shift) * (i / (n-1)) ** (100 / shape)`` steps/s, ``rate[0] =
+    rate[1] * start_pct / 100``, period = ``tick_hz / rate``.
+    """
+    n = SCAN_MOTOR_TABLE_LENGTH
+    rate = [0] * n
+    for i in range(1, n):
+        rate[i] = int((vmax << shift) * math.exp(math.log(i / (n - 1)) * 100 / shape)) & 0xFFFF
+    rate[0] = max(1, rate[1] * start_pct // 100)
+    return tuple(min(0xFFFF, tick_hz // r) for r in rate)
+
+
+#: Head ``40404, 4028, 3016, 2547, …``; matches every SilverFast 8300i SE image
+#: and shading pass from 150 to 7200 dpi once clamped (:func:`scan_motor_table`).
+SCAN_RAMP: tuple[int, ...] = _vendor_scan_ramp()
+
+
+def scan_motor_table(period: int) -> tuple[int, ...]:
+    """AHB ``0x10000000``/``0x10004000``/``0x10008000`` table for a scan move.
+
+    SilverFast accelerates along :data:`SCAN_RAMP` and holds ``period`` once the
+    ramp reaches it: every entry is ``max(SCAN_RAMP[i], period)``.
+    """
+    body = int(period)
+    if not 0 <= body <= 0xFFFF:
+        raise ValueError(
+            f"scan motor period {body} does not fit the AHB table's 16-bit words (0-65535)"
+        )
+    return tuple(max(v, body) for v in SCAN_RAMP)
+
+
 #: Slow / reference-feed ramp. Head ``0x32BB``, tail ``0x0682``.
 SLOPE_TABLE_SLOW: tuple[int, ...] = (
     0x32BB, 0x1E66, 0x190A, 0x1662, 0x14AB, 0x1368, 0x1278, 0x11AC,

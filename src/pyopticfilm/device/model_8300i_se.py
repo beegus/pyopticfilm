@@ -13,8 +13,10 @@ All divergent knobs below come from SilverFast 9 USBPcap full-frame captures
     Full-frame STR/END = 242/10610.  Settled colour-short feed2 is
     PPI-dependent (13040…13128); :meth:`feed_to_scan_steps_for_dpi` programs
     that map (ME-long → 13128).  ``feed_to_scan_steps`` stays 13128 as a
-    dpi-less fallback.  Image ``LINCNT`` is the V2 ladder table (SilverFast
-    programs SF = V2/4 on the wire; pyopticfilm keeps the 4× convention).
+    dpi-less fallback.  Image ``LINCNT`` is SilverFast's: one unit and one
+    bulk row per output line, a quarter of the SE/V2 value for the same
+    travel, because :meth:`Model8300iSE.scan_motor_table` runs the motor at
+    twice the SE/V2 speed.
 
 **Timing**
     Image-pass ``LPERIOD`` matches the V2 capture ladder at every measured
@@ -48,7 +50,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from pyopticfilm.device.gl128_common import LADDER_LINCNT_BY_DPI, SCAN_REGS, Gl128Common
-from pyopticfilm.device.tables_8300i_se import SLOPE_TABLE_FAST, SLOPE_TABLE_SLOW
+from pyopticfilm.device.tables_8300i_se import (
+    SLOPE_TABLE_FAST,
+    SLOPE_TABLE_SLOW,
+    scan_motor_table,
+)
 
 # Per-scan sensor/AFE timing overlay. SilverFast writes these before every AFE,
 # shading and image acquire at every measured PPI, IR included (docs §10.7).
@@ -103,19 +109,19 @@ _LPERIOD_BY_DPI_8300I: dict[int, int] = {
 }
 assert set(_LPERIOD_BY_DPI_8300I) == set(LADDER_LINCNT_BY_DPI)
 
-# Same physical full-frame height as the 8100 V2 ladder (SF wire LINCNT × 4).
+# SilverFast full-frame LINCNT; the same travel as the 8100 V2 ladder (V2 / 4).
 _LADDER_LINCNT_BY_DPI_8300I: dict[int, int] = {
-    150: 2420,  # measured (SF×4)
-    300: 2420,  # measured (SF×4)
-    600: 2420,  # measured (SF×4)
-    720: 2904,  # filled (V2 formula; no capture)
-    900: 3628,  # measured (SF×4)
-    1200: 4836,  # measured (SF×4)
-    1440: 5804,  # filled (V2 formula; no capture)
-    1800: 7252,  # measured (SF×4)
-    2400: 9668,  # measured (SF×4)
-    3600: 14500,  # measured (SF×4)
-    7200: 29012,  # measured (SF×4)
+    150: 605,  # measured (asic→600)
+    300: 605,  # measured (asic→600)
+    600: 605,  # measured
+    720: 726,  # filled (V2 formula / 4; no capture)
+    900: 907,  # measured
+    1200: 1209,  # measured
+    1440: 1451,  # filled (V2 formula / 4; no capture)
+    1800: 1813,  # measured
+    2400: 2417,  # measured
+    3600: 3625,  # measured
+    7200: 7253,  # measured
 }
 assert set(_LADDER_LINCNT_BY_DPI_8300I) == set(LADDER_LINCNT_BY_DPI)
 
@@ -215,7 +221,7 @@ class Model8300iSE(Gl128Common):
     )
 
     max_image_lincnt_by_feed2: Mapping[int, int] = field(
-        default_factory=lambda: {13128: 29012}
+        default_factory=lambda: {13128: 7253}
     )
 
     ladder_feed2_steps: int = 13128
@@ -245,9 +251,17 @@ class Model8300iSE(Gl128Common):
     asic_clock_scan_0x8c: int = 0x0D
     # Plug-in capture: 0x0B = 0x84, 0x13 = 0x0F, 0x0B = 0x8C after the boot clock.
     asic_boot_0x0b: int = 0x8C
-    #: 30000 per channel at 7200 dpi (REG_EXPOSURE 15000), the 8200i SE vendor
-    #: rule; not yet confirmed by an 8300i SE 7200 dpi capture.
-    native_image_exposure_factor: int = 2
+    #: The ``0x1D=0x81`` doubling at 7200 dpi is already in
+    #: :meth:`channel_exposure_for`, which gives 15000 there like SilverFast.
+    native_image_exposure_factor: int = 1
+    #: 512 KiB announces crashed the motor mid-pass at 1800 and 7200 dpi on
+    #: hardware with the SilverFast scan motor table.
+    image_read_chunk_bytes: int = 0xF000
+    #: Every SilverFast capture, 150 to 7200 dpi: bulk bytes = ``LINCNT`` x one
+    #: full row. Under the SE/V2 4x ``LINCNT`` the carriage ran twice the frame
+    #: height and hit the end of travel.
+    usb_image_lincnt_half_lines: bool = False
+    image_lincnt_per_line: int = 1
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False
@@ -270,6 +284,22 @@ class Model8300iSE(Gl128Common):
         """Host column unstagger; see ``_STAGGER_BY_DPI_8300I``."""
         key = self.asic_dpi_for(resolution)
         return tuple(_STAGGER_BY_DPI_8300I.get(key, ()))
+
+    def channel_exposure_for(self, resolution: int, *, exposure: int | None = None) -> int:
+        """Scan motor period: ``exposure × ((0x1D & 0x1F) + 1) × asic_dpi / 14400``.
+
+        Half the SE/V2 ``exposure // oversample`` at every PPI in the SilverFast
+        captures (1875 at 1800 dpi, 3750 at 3600, 15000 at 7200 with
+        ``0x1D=0x81``; ME-long 60000 gives 15000 at 3600).
+        """
+        base = int(exposure if exposure is not None else self.exposure_lperiod)
+        oversample = self.oversample_for(resolution)
+        reg_1d_lines = 2 if oversample == 1 else 1
+        return base * reg_1d_lines // (2 * oversample)
+
+    def scan_motor_table(self, period: int) -> tuple[int, ...]:
+        """Vendor acceleration ramp clamped at ``period`` (head 40404)."""
+        return scan_motor_table(period)
 
     def slope_table_fast(self) -> tuple[int, ...]:
         """8300i CUSTOM fast ramp (head ``0x846A``)."""

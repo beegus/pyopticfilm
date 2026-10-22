@@ -315,13 +315,17 @@ class GenesysUsbProtocol:
             raise UsbError("bulk_read returned empty data mid-transfer")
         return data
 
-    def bulk_read_exact(self, size: int) -> bytes:
-        """Read exactly ``size`` bytes from an in-flight :meth:`bulk_read_begin`."""
+    def bulk_read_exact(self, size: int, *, max_transfer: int = BULK_MAX_SIZE) -> bytes:
+        """Read exactly ``size`` bytes from an in-flight :meth:`bulk_read_begin`.
+
+        Each bulk IN request asks for at most ``max_transfer`` bytes.
+        """
         if size <= 0:
             return b""
+        step = max(1, int(max_transfer))
         buf = bytearray()
         while len(buf) < size:
-            data = self._transport.bulk_read(min(size - len(buf), BULK_MAX_SIZE))
+            data = self._transport.bulk_read(min(size - len(buf), step))
             if not data:
                 from pyopticfilm.exceptions import UsbError
 

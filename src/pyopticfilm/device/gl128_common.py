@@ -274,6 +274,9 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "asic_clock_scan_0x8c",
         "asic_boot_0x0b",
         "native_image_exposure_factor",
+        "image_read_chunk_bytes",
+        "usb_image_lincnt_half_lines",
+        "image_lincnt_per_line",
     }
 )
 
@@ -287,7 +290,6 @@ GL128_SHARED_FIELDS: frozenset[str] = frozenset(
         "bpp_gray",
         "bpp_color",
         "usb_image_depth",
-        "usb_image_lincnt_half_lines",
         "usb_calib_depth",
         "usb_planar_rgb",
         "mirror_x",
@@ -311,7 +313,6 @@ GL128_SHARED_FIELDS: frozenset[str] = frozenset(
         "ld_shift_g",
         "ld_shift_b",
         "lincnt_includes_line_shift",
-        "image_lincnt_per_line",
         "y_oversampled",
         "stagger_y_by_dpi",
         "register_dpiset_by_dpi",
@@ -370,7 +371,6 @@ class Gl128Common:
     bpp_gray: tuple[int, ...] = (16,)
     bpp_color: tuple[int, ...] = (16,)
     usb_image_depth: int = 16
-    usb_image_lincnt_half_lines: bool = True
     usb_calib_depth: int = 16
     usb_planar_rgb: bool = False
     mirror_x: bool = True
@@ -396,7 +396,6 @@ class Gl128Common:
     ld_shift_g: int = 24
     ld_shift_b: int = 48
     lincnt_includes_line_shift: bool = False
-    image_lincnt_per_line: int = 4
     y_oversampled: bool = True
 
     stagger_y_by_dpi: Mapping[int, tuple[int, ...]] = field(
@@ -463,6 +462,8 @@ class Gl128Common:
         ladder_feed2_steps: int
         ladder_lincnt_by_dpi: Mapping[int, int]
         sensor_custom_regs: Mapping[int, int]
+        usb_image_lincnt_half_lines: bool
+        image_lincnt_per_line: int
 
     @property
     def max_area_mm(self) -> tuple[float, float]:
@@ -541,6 +542,12 @@ class Gl128Common:
         """Per-channel RAM exposure, ``exposure // oversample`` in the captures."""
         base = int(exposure if exposure is not None else self.exposure_lperiod)
         return base // self.oversample_for(resolution)
+
+    def scan_motor_table(self, period: int) -> tuple[int, ...]:
+        """Words for AHB ``0x10000000``/``0x10004000``/``0x10008000``: flat ``period``."""
+        from pyopticfilm.device.tables_8200i_se import exposure_table
+
+        return exposure_table(period)
 
     def pixel_clock_for_image(self, resolution: int, *, long_exposure: bool = False) -> int:
         """``0xA5``/``0xAB`` for an image pass at ``resolution``."""

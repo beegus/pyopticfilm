@@ -18,15 +18,15 @@ def test_preview_safe_area_1200_uses_window_top_feed2():
     area, meta = preview_safe_scan_area(MODEL_8300I_SE, 1200, y1=0.0)
     assert area[0] == 0.0 and area[2] == 1.0
     assert meta["feed2"] == MODEL_8300I_SE.feed_to_scan_top_steps == 13128
-    assert meta["target_lincnt"] == 4836
-    assert meta["max_lincnt"] == 4836
+    assert meta["target_lincnt"] == 1209
+    assert meta["max_lincnt"] == 1209
 
 
 def test_bringup_preview_safe_passes_motor_gate_at_1200():
     geometry, meta = bringup_scan_geometry(MODEL_8300I_SE, 1200, profile="preview_safe")
     feed2 = int(meta["feed2"])
     assert feed2 == 13128
-    assert geometry.lincnt_register == 4836
+    assert geometry.lincnt_register == 1209
     max_lc = MODEL_8300I_SE.max_lincnt_for(feed2, 1200)
     assert geometry.lincnt_register <= max_lc
 

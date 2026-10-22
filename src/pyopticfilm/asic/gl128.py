@@ -1201,7 +1201,13 @@ class Gl128:
 
         if channel_exposure is None:
             channel_exposure = self.model.channel_exposure_for(resolution)
-        exposure = _u16_table_bytes(exposure_table(int(channel_exposure)))
+        table_fn = getattr(self.model, "scan_motor_table", None)
+        words = (
+            table_fn(int(channel_exposure))
+            if callable(table_fn)
+            else exposure_table(int(channel_exposure))
+        )
+        exposure = _u16_table_bytes(words)
         for addr in (r.AHB_CHANNEL_R, r.AHB_CHANNEL_G, r.AHB_CHANNEL_B):
             self.protocol.write_ahb(addr, exposure)
         logger.debug(

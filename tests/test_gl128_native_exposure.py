@@ -84,7 +84,7 @@ def test_se_me_long_pass_above_floor_is_unchanged(long_exposure):
 
 @pytest.mark.parametrize(
     ("model", "expected"),
-    [(MODEL_8200I_SE, 28000), (MODEL_8100_V2, 28000), (MODEL_8300I_SE, 30000)],
+    [(MODEL_8200I_SE, 28000), (MODEL_8100_V2, 28000), (MODEL_8300I_SE, 15000)],
 )
 def test_native_line_floor_per_model(model, expected):
     assert native_line_floor(model) == expected
@@ -154,14 +154,18 @@ def test_se_me_below_7200_unchanged():
     assert long_ch == long_reg // 2
 
 
-def test_8300i_se_image_table_at_7200():
-    channel, reg_exposure = _configure(MODEL_8300I_SE, 7200)
-    assert (channel, reg_exposure) == (30000, 15000)
+@pytest.mark.parametrize(
+    ("dpi", "expected"),
+    [(600, 625), (900, 937), (1200, 1250), (1800, 1875), (2400, 2500), (3600, 3750), (7200, 15000)],
+)
+def test_8300i_se_motor_period_matches_silverfast_captures(dpi, expected):
+    channel, reg_exposure = _configure(MODEL_8300I_SE, dpi)
+    assert (channel, reg_exposure) == (expected, 15000)
 
 
-def test_8300i_se_below_7200_unchanged():
-    channel, _ = _configure(MODEL_8300I_SE, 3600)
-    assert channel == 15000 // 2
+@pytest.mark.parametrize(("dpi", "expected"), [(1200, 5000), (3600, 15000)])
+def test_8300i_se_me_long_motor_period_matches_silverfast_captures(dpi, expected):
+    assert MODEL_8300I_SE.channel_exposure_for(dpi, exposure=60000) == expected
 
 
 def test_8100_v2_image_table_at_7200():

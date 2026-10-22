@@ -155,7 +155,7 @@ def test_divergent_fields_match_capture_catalog():
         20232: 3700,
     }
     assert dict(MODEL_8100_V2.max_image_lincnt_by_feed2) == {13128: 29012}
-    assert dict(MODEL_8300I_SE.max_image_lincnt_by_feed2) == {13128: 29012}
+    assert dict(MODEL_8300I_SE.max_image_lincnt_by_feed2) == {13128: 7253}
     assert dict(MODEL_8200I_SE.ladder_lincnt_by_dpi) == {
         150: 2292,
         300: 2292,
@@ -183,7 +183,14 @@ def test_divergent_fields_match_capture_catalog():
         7200: 29012,
     }
     assert dict(MODEL_8100_V2.ladder_lincnt_by_dpi) == v2_ladder
-    assert dict(MODEL_8300I_SE.ladder_lincnt_by_dpi) == v2_ladder
+    assert dict(MODEL_8300I_SE.ladder_lincnt_by_dpi) == {
+        dpi: lincnt // 4 for dpi, lincnt in v2_ladder.items()
+    }
+    for model in (MODEL_8200I_SE, MODEL_8100_V2):
+        assert model.image_lincnt_per_line == 4
+        assert model.usb_image_lincnt_half_lines is True
+    assert MODEL_8300I_SE.image_lincnt_per_line == 1
+    assert MODEL_8300I_SE.usb_image_lincnt_half_lines is False
     # Per-scan sensor timing: SE/V2 share SCAN_REGS; 8300i SilverFast writes its own.
     assert dict(MODEL_8200I_SE.sensor_custom_regs) == dict(MODEL_8100_V2.sensor_custom_regs)
     se_regs = dict(MODEL_8200I_SE.sensor_custom_regs)
