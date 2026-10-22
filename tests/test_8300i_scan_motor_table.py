@@ -10,6 +10,7 @@ from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.model_8300i_se import MODEL_8300I_SE
 from pyopticfilm.device.tables_8200i_se import exposure_table
 from pyopticfilm.device.tables_8300i_se import SCAN_RAMP, scan_motor_table
+from pyopticfilm.scan.geometry import compute_geometry
 
 #: SilverFast 1800 dpi image pass (capture_1800_full-frame_with-ir_no-me).
 _SF_1800_HEAD = (40404, 4028, 3016, 2547, 2259, 2058, 1908, 1875, 1875)
@@ -48,3 +49,16 @@ def test_model_uses_ramp():
 @pytest.mark.parametrize("model", [MODEL_8200I_SE, MODEL_8100_V2])
 def test_se_and_v2_keep_flat_table(model):
     assert model.scan_motor_table(7000) == exposure_table(7000)
+
+
+@pytest.mark.parametrize(
+    ("dpi", "lincnt", "nbytes"),
+    [(1800, 1813, 28_195_776), (7200, 7253, 451_194_624)],
+)
+def test_full_frame_lincnt_and_bulk_size_match_silverfast(dpi, lincnt, nbytes):
+    """At the SilverFast motor speed a 4x LINCNT ran the carriage into the end stop."""
+    geometry = compute_geometry(dpi, model=MODEL_8300I_SE)
+    assert geometry.lincnt_register == lincnt
+    assert geometry.optical_line_count == lincnt
+    assert geometry.total_bytes == nbytes
+    assert geometry.travel_mm == pytest.approx(25.58, abs=0.02)

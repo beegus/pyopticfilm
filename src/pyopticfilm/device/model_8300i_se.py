@@ -13,8 +13,10 @@ All divergent knobs below come from SilverFast 9 USBPcap full-frame captures
     Full-frame STR/END = 242/10610.  Settled colour-short feed2 is
     PPI-dependent (13040…13128); :meth:`feed_to_scan_steps_for_dpi` programs
     that map (ME-long → 13128).  ``feed_to_scan_steps`` stays 13128 as a
-    dpi-less fallback.  Image ``LINCNT`` is the V2 ladder table (SilverFast
-    programs SF = V2/4 on the wire; pyopticfilm keeps the 4× convention).
+    dpi-less fallback.  Image ``LINCNT`` is SilverFast's: one unit and one
+    bulk row per output line, a quarter of the SE/V2 value for the same
+    travel, because :meth:`Model8300iSE.scan_motor_table` runs the motor at
+    twice the SE/V2 speed.
 
 **Timing**
     Image-pass ``LPERIOD`` matches the V2 capture ladder at every measured
@@ -107,19 +109,19 @@ _LPERIOD_BY_DPI_8300I: dict[int, int] = {
 }
 assert set(_LPERIOD_BY_DPI_8300I) == set(LADDER_LINCNT_BY_DPI)
 
-# Same physical full-frame height as the 8100 V2 ladder (SF wire LINCNT × 4).
+# SilverFast full-frame LINCNT; the same travel as the 8100 V2 ladder (V2 / 4).
 _LADDER_LINCNT_BY_DPI_8300I: dict[int, int] = {
-    150: 2420,  # measured (SF×4)
-    300: 2420,  # measured (SF×4)
-    600: 2420,  # measured (SF×4)
-    720: 2904,  # filled (V2 formula; no capture)
-    900: 3628,  # measured (SF×4)
-    1200: 4836,  # measured (SF×4)
-    1440: 5804,  # filled (V2 formula; no capture)
-    1800: 7252,  # measured (SF×4)
-    2400: 9668,  # measured (SF×4)
-    3600: 14500,  # measured (SF×4)
-    7200: 29012,  # measured (SF×4)
+    150: 605,  # measured (asic→600)
+    300: 605,  # measured (asic→600)
+    600: 605,  # measured
+    720: 726,  # filled (V2 formula / 4; no capture)
+    900: 907,  # measured
+    1200: 1209,  # measured
+    1440: 1451,  # filled (V2 formula / 4; no capture)
+    1800: 1813,  # measured
+    2400: 2417,  # measured
+    3600: 3625,  # measured
+    7200: 7253,  # measured
 }
 assert set(_LADDER_LINCNT_BY_DPI_8300I) == set(LADDER_LINCNT_BY_DPI)
 
@@ -219,7 +221,7 @@ class Model8300iSE(Gl128Common):
     )
 
     max_image_lincnt_by_feed2: Mapping[int, int] = field(
-        default_factory=lambda: {13128: 29012}
+        default_factory=lambda: {13128: 7253}
     )
 
     ladder_feed2_steps: int = 13128
@@ -255,6 +257,11 @@ class Model8300iSE(Gl128Common):
     #: 512 KiB announces crashed the motor mid-pass at 1800 and 7200 dpi on
     #: hardware with the SilverFast scan motor table.
     image_read_chunk_bytes: int = 0xF000
+    #: Every SilverFast capture, 150 to 7200 dpi: bulk bytes = ``LINCNT`` x one
+    #: full row. Under the SE/V2 4x ``LINCNT`` the carriage ran twice the frame
+    #: height and hit the end of travel.
+    usb_image_lincnt_half_lines: bool = False
+    image_lincnt_per_line: int = 1
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False
