@@ -150,7 +150,6 @@ def test_gl128_acquire_reannounces_usb_sized_blocks():
     asic = MagicMock()
     asic.protocol = proto
     asic.read_status.return_value = MagicMock(is_buffer_empty=False)
-    asic.image_usb_pace_s = 0.0
 
     session = Gl128ScanSession(asic, MODEL_8200I_SE)
     session.se_regs = Gl128Registers()
@@ -158,48 +157,3 @@ def test_gl128_acquire_reannounces_usb_sized_blocks():
     assert len(raw) == total
     assert begins == [BULK_MAX_SIZE, BULK_MAX_SIZE, 100]
     assert proto.bulk_read_exact.call_count == 3
-
-
-def test_gl128_acquire_paces_between_chunks(monkeypatch):
-    from unittest.mock import MagicMock, patch
-
-    from pyopticfilm.asic.registers import Gl128Registers
-    from pyopticfilm.usb.device import BULK_MAX_SIZE
-
-    sleeps: list[float] = []
-    monkeypatch.setattr(
-        "pyopticfilm.scan.session_gl128.time.sleep",
-        lambda s: sleeps.append(float(s)),
-    )
-
-    total = BULK_MAX_SIZE * 2
-    geometry = MagicMock()
-    geometry.total_bytes = total
-    geometry.disable_buffer_full_move = False
-    geometry.line_bytes = BULK_MAX_SIZE
-    geometry.resolution = 7200
-
-    proto = MagicMock()
-    remaining = {"n": total}
-
-    def exact(size):
-        n = min(int(size), remaining["n"])
-        remaining["n"] -= n
-        return b"\x00" * n
-
-    proto.bulk_read_exact.side_effect = exact
-
-    asic = MagicMock()
-    asic.protocol = proto
-    asic.read_status.return_value = MagicMock(is_buffer_empty=False)
-    asic.image_usb_pace_s = 0.003
-
-    session = Gl128ScanSession(asic, MODEL_8200I_SE)
-    session.se_regs = Gl128Registers()
-    # First read waits on the scanner (one-line sleep), second is served at once.
-    mono = iter([0.0, 5.0, 5.0, 5.0])
-    with patch.object(Gl128ScanSession, "_wait_data"), patch(
-        "pyopticfilm.scan.session_gl128.time.monotonic", side_effect=lambda: next(mono)
-    ):
-        session._acquire(geometry, progress=None, cancel=None)
-    assert sleeps == [session._line_interval_s(geometry)]

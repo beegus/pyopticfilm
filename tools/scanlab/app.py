@@ -37,6 +37,7 @@ from tools.scanlab.backend import (
     lab_scan_kwargs,
     lab_scan_needs_motor_warning,
     list_lab_targets,
+    multi_pass_allowed_at,
     nonse_safe_y_fraction,
     resolve_ir_pass_and_n_passes,
     usb_log_section_key,
@@ -121,15 +122,6 @@ class ScanLabWindow(QMainWindow):
         self.usb_planar.setChecked(False)
         self.usb_planar.toggled.connect(self._on_usb_planar)
         form.addWidget(self.usb_planar)
-
-        self.quiet_usb_pace = QCheckBox("Adaptive quiet drain")
-        self.quiet_usb_pace.setChecked(True)
-        self.quiet_usb_pace.setToolTip(
-            "Rate-limit host bulk reads to the ASIC line rate (no fixed pause "
-            "before each chunk). Keeps motor creep continuous at 7200 dpi; "
-            "uncheck for fastest drain (louder)."
-        )
-        form.addWidget(self.quiet_usb_pace)
 
         self.slow_image_slope = QCheckBox("Slow image slope")
         self.slow_image_slope.setChecked(False)
@@ -385,33 +377,26 @@ class ScanLabWindow(QMainWindow):
         if not self.ir_pass.isEnabled():
             self.ir_pass.setChecked(False)
         is_gl128 = getattr(target.model, "asic", "") == "GL128"
-        self.me_pass.setEnabled(is_gl128)
         was_connected = getattr(self.forensic_tab, "_is_connected", False)
         self._worker.close_scanner()
         self._refresh_banner()
         if was_connected:
             self._on_forensic_connect()
-        if not is_gl128:
-            self.me_pass.setChecked(False)
-        self.n_passes.setEnabled(is_gl128 and not self.ir_pass.isChecked())
-        if not self.n_passes.isEnabled():
-            self.n_passes.setValue(1)
         self.align_passes.setEnabled(is_gl128)
-        self._sync_manual_exposure_enabled()
-        self._update_me_tabs_visible()
+        self._sync_pass_modes()
         self._refresh_banner()
         self.prescan_view.clear_crop()
         if self._capture is not None:
             self._decode_loaded_capture()
 
     def _on_ir_pass_toggled(self, checked: bool) -> None:
-        ir_pass, n_passes = resolve_ir_pass_and_n_passes(
+        _ir_pass, n_passes = resolve_ir_pass_and_n_passes(
             ir_pass_checked=checked, n_passes=self.n_passes.value(), changed="ir_pass"
         )
         self.n_passes.blockSignals(True)
         self.n_passes.setValue(n_passes)
         self.n_passes.blockSignals(False)
-        self.n_passes.setEnabled(self.n_passes.isEnabled() and not ir_pass)
+        self._sync_pass_modes()
 
     def _on_n_passes_changed(self, value: int) -> None:
         ir_pass, _ = resolve_ir_pass_and_n_passes(
@@ -422,7 +407,30 @@ class ScanLabWindow(QMainWindow):
             self.ir_pass.setChecked(ir_pass)
             self.ir_pass.blockSignals(False)
 
+    def _is_gl128(self) -> bool:
+        target = self._current_target()
+        return target is not None and getattr(target.model, "asic", "") == "GL128"
+
+    def _sync_pass_modes(self, *, busy: bool = False) -> None:
+        """Enable ME / Multi-Pass only on GL128 below native resolution."""
+        target = self._current_target()
+        allowed = (
+            not busy
+            and target is not None
+            and self._is_gl128()
+            and multi_pass_allowed_at(target.model, self._default_dpi())
+        )
+        if not allowed and not busy:
+            self.me_pass.setChecked(False)
+            self.n_passes.setValue(1)
+        self.me_pass.setEnabled(allowed)
+        self.n_passes.setEnabled(allowed and not self.ir_pass.isChecked())
+        self._sync_manual_exposure_enabled(busy=busy)
+        if not busy:
+            self._update_me_tabs_visible()
+
     def _on_ppi_changed(self, _index: int) -> None:
+        self._sync_pass_modes()
         if self._capture is not None:
             self._decode_loaded_capture()
 
@@ -521,10 +529,10 @@ class ScanLabWindow(QMainWindow):
             edit.clear()
         self._update_me_tabs_visible()
 
-    def _sync_manual_exposure_enabled(self) -> None:
+    def _sync_manual_exposure_enabled(self, *, busy: bool = False) -> None:
         """Manual overrides only apply to the pass they name — gray out the rest."""
         me_active = self.me_pass.isEnabled() and self.me_pass.isChecked()
-        self.single_pass_exposure.setEnabled(self.me_pass.isEnabled() and not me_active)
+        self.single_pass_exposure.setEnabled(not busy and self._is_gl128() and not me_active)
         self.me_short_exposure.setEnabled(me_active)
         self.me_long_exposure.setEnabled(me_active)
 
@@ -879,7 +887,6 @@ class ScanLabWindow(QMainWindow):
                 ),
                 self.usb_planar.isChecked(),
             ),
-            quiet_usb_pace=self.quiet_usb_pace.isChecked(),
             slow_image_slope=self.slow_image_slope.isChecked(),
         )
         self.banner.setText(device_banner(resolved))
@@ -905,7 +912,6 @@ class ScanLabWindow(QMainWindow):
                 ),
                 self.usb_planar.isChecked(),
             ),
-            quiet_usb_pace=self.quiet_usb_pace.isChecked(),
             slow_image_slope=self.slow_image_slope.isChecked(),
         )
 
@@ -1004,7 +1010,7 @@ class ScanLabWindow(QMainWindow):
                 "dpi": dpi,
                 "crop": list(crop) if crop is not None else None,
                 "ir_pass": self.ir_pass.isChecked(),
-                "me_pass": self.me_pass.isChecked(),
+                "me_pass": self.me_pass.isEnabled() and self.me_pass.isChecked(),
                 "n_passes": self.n_passes.value(),
                 "align_passes": self.align_passes.isChecked(),
                 "apply_calib": self.apply_calib.isChecked(),
@@ -1017,7 +1023,7 @@ class ScanLabWindow(QMainWindow):
                 target=target,
                 dpi=dpi,
                 ir_pass=self.ir_pass.isChecked(),
-                me_pass=self.me_pass.isChecked(),
+                me_pass=self.me_pass.isEnabled() and self.me_pass.isChecked(),
                 apply_calib=self.apply_calib.isChecked(),
                 single_pass_exposure=single_pass_exposure,
                 me_short_exposure=me_short_exposure,
@@ -1228,24 +1234,32 @@ class ScanLabWindow(QMainWindow):
             if self._current_target()
             else False
         ))
-        is_gl128 = (
-            self._current_target() is not None
-            and getattr(self._current_target().model, "asic", "") == "GL128"
-        )
-        self.me_pass.setEnabled(not busy and is_gl128)
-        self.n_passes.setEnabled(not busy and is_gl128 and not self.ir_pass.isChecked())
-        self.align_passes.setEnabled(not busy and is_gl128)
-        self._sync_manual_exposure_enabled()
+        self.align_passes.setEnabled(not busy and self._is_gl128())
+        self._sync_pass_modes(busy=busy)
         self.run_mock.setEnabled(not busy)
         self.override_hw_gate.setEnabled(not busy)
         self.apply_calib.setEnabled(not busy)
         self.btn_clear_calib.setEnabled(not busy)
         self.usb_planar.setEnabled(not busy)
-        self.quiet_usb_pace.setEnabled(not busy)
         self.slow_image_slope.setEnabled(not busy)
         self.btn_open_capture.setEnabled(not busy)
         self.forensic_tab.set_busy(busy)
         self.forensic_tab.setEnabled(not busy)
+
+
+def _enable_info_logging() -> None:
+    """Print ``pyopticfilm`` INFO lines (e.g. ``GL128 image read:``) to stderr."""
+    import logging
+
+    from pyopticfilm.logging import get_logger
+
+    logger = get_logger()
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+    if logger.level == logging.NOTSET or logger.level > logging.INFO:
+        logger.setLevel(logging.INFO)
 
 
 def run() -> int:
@@ -1253,6 +1267,7 @@ def run() -> int:
 
     from PyQt6.QtWidgets import QApplication
 
+    _enable_info_logging()
     app = QApplication(sys.argv)
     win = ScanLabWindow()
     win.show()

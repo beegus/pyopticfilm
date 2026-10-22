@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""GL128 image read: preallocated buffer, quiet-drain rule, timing report."""
+"""GL128 image read: preallocated buffer, unpaced drain, timing report."""
 
 from __future__ import annotations
 
@@ -13,12 +13,11 @@ from pyopticfilm.exceptions import ScanError
 from pyopticfilm.scan.session_gl128 import ACQUIRE_TIMING_ENV, Gl128ScanSession
 
 
-def _session(reads, *, pace: float = 0.0):
+def _session(reads):
     proto = MagicMock()
     proto.bulk_read_exact.side_effect = reads
     asic = MagicMock()
     asic.protocol = proto
-    asic.image_usb_pace_s = pace
     session = Gl128ScanSession(asic, MODEL_8200I_SE)
     session.se_regs = Gl128Registers()
     return session
@@ -53,22 +52,14 @@ def test_empty_read_raises():
         session._acquire(_geometry(10, 4), progress=None, cancel=None)
 
 
-@pytest.mark.parametrize(
-    ("elapsed", "slept"),
-    [(0.0, False), (0.001, False), (0.5, True)],
-)
-def test_quiet_drain_sleeps_only_after_a_read_that_waited(elapsed, slept):
-    session = _session([b"\x00" * 4096], pace=0.003)
-    sleeps: list[float] = []
-    mono = iter([0.0, elapsed])
+def test_acquire_never_sleeps():
+    session = _session([b"\x00" * 4096] * 3)
     with (
         patch.object(Gl128ScanSession, "_wait_data"),
-        patch("pyopticfilm.scan.session_gl128.time.sleep", side_effect=sleeps.append),
-        patch("pyopticfilm.scan.session_gl128.time.monotonic", side_effect=lambda: next(mono)),
+        patch("pyopticfilm.scan.session_gl128.time.sleep") as sleep,
     ):
-        session._acquire(_geometry(4096, 4096), progress=None, cancel=None)
-    geometry = _geometry(4096, 4096)
-    assert sleeps == ([session._line_interval_s(geometry)] if slept else [])
+        session._acquire(_geometry(3 * 4096, 4096), progress=None, cancel=None)
+    sleep.assert_not_called()
 
 
 def test_timing_summary_logged_and_csv_appended(tmp_path, monkeypatch, caplog):
@@ -80,7 +71,8 @@ def test_timing_summary_logged_and_csv_appended(tmp_path, monkeypatch, caplog):
             session._acquire(_geometry(8, 4), progress=None, cancel=None)
     assert "GL128 image read: 7200 dpi" in caplog.text
     assert "chunks=2" in caplog.text
+    assert "quiet_drain" not in caplog.text
     rows = out.read_text(encoding="utf-8").splitlines()
-    assert rows[0] == "dpi,quiet_drain,offset,bytes,read_s,sleep_s,gap_s"
+    assert rows[0] == "dpi,offset,bytes,read_s,gap_s"
     assert len(rows) == 1 + 4
-    assert [r.split(",")[2:4] for r in rows[1:3]] == [["0", "4"], ["4", "4"]]
+    assert [r.split(",")[1:3] for r in rows[1:3]] == [["0", "4"], ["4", "4"]]

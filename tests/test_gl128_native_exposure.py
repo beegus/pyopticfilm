@@ -11,8 +11,19 @@ from pyopticfilm.asic.registers import Gl128Registers
 from pyopticfilm.device.model_8100_v2 import MODEL_8100_V2
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.model_8300i_se import MODEL_8300I_SE
+from pyopticfilm.device.select import create_asic
+from pyopticfilm.exceptions import ScanError
 from pyopticfilm.scan.geometry import compute_geometry
-from pyopticfilm.scan.session_gl128 import Gl128ScanSession
+from pyopticfilm.scan.session_gl128 import (
+    Gl128ScanSession,
+    gl128_multi_pass_allowed,
+    native_line_floor,
+)
+from pyopticfilm.scanner import Scanner
+from pyopticfilm.usb.fake import MockScannerTransport
+from pyopticfilm.usb.protocol import GenesysUsbProtocol
+
+_TINY = (0.0, 0.0, 0.08, 0.08)
 
 
 def _image_regs(model, dpi: int) -> dict[int, int]:
@@ -57,14 +68,87 @@ def test_se_image_table_matches_silverfast_ladder(dpi, expected):
     assert reg_exposure == 14000
 
 
-def test_se_manual_override_is_not_scaled():
-    channel, reg_exposure = _configure(MODEL_8200I_SE, 7200, _pass_exposure=28000, _pass_manual=True)
-    assert (channel, reg_exposure) == (28000, 28000)
+@pytest.mark.parametrize("manual", [28000, 14000, 10000])
+def test_se_manual_override_is_not_floored(manual):
+    channel, reg_exposure = _configure(MODEL_8200I_SE, 7200, _pass_exposure=manual, _pass_manual=True)
+    assert (channel, reg_exposure) == (manual, manual)
 
 
-def test_se_me_bracket_keeps_unscaled_table():
-    channel, _ = _configure(MODEL_8200I_SE, 7200, _pass_native_exposure_scale=False)
-    assert channel == 14000
+@pytest.mark.parametrize("long_exposure", [42000, 64000])
+def test_se_me_long_pass_above_floor_is_unchanged(long_exposure):
+    channel, reg_exposure = _configure(
+        MODEL_8200I_SE, 7200, _pass_exposure=long_exposure, _pass_long_exposure=True
+    )
+    assert (channel, reg_exposure) == (long_exposure, long_exposure)
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [(MODEL_8200I_SE, 28000), (MODEL_8100_V2, 28000), (MODEL_8300I_SE, 30000)],
+)
+def test_native_line_floor_per_model(model, expected):
+    assert native_line_floor(model) == expected
+
+
+def _session_pass_tables(dpi: int, **run_kwargs) -> list[tuple[int, int]]:
+    """``(channel table word, REG_EXPOSURE)`` for every image pass of a mocked run."""
+    usb = MockScannerTransport()
+    asic = create_asic(GenesysUsbProtocol(usb), MODEL_8200I_SE)
+    asic._motor_moves_enabled = True
+    asic.init()
+    session = Gl128ScanSession(asic, MODEL_8200I_SE)
+    passes: list[tuple[int, int]] = []
+    orig_upload = asic.upload_tables
+
+    def spy(*args, **kwargs):
+        if not kwargs.get("shading"):
+            reg = session._pass_exposure or MODEL_8200I_SE.exposure_short
+            passes.append((int(kwargs["channel_exposure"]), int(reg)))
+        return orig_upload(*args, **kwargs)
+
+    asic.upload_tables = spy
+    session.run(resolution=dpi, area=_TINY, apply_calib=False, **run_kwargs)
+    return passes
+
+
+@pytest.mark.parametrize(
+    "run_kwargs",
+    [{"multi_exposure": True}, {"n_passes": 2}, {"multi_exposure": True, "n_passes": 2}],
+)
+def test_se_me_and_multi_pass_rejected_at_7200_before_any_pass(run_kwargs):
+    passes: list[tuple[int, int]] = []
+    with pytest.raises(ScanError, match="7200 dpi"):
+        passes = _session_pass_tables(7200, **run_kwargs)
+    assert passes == []
+
+
+@pytest.mark.parametrize("model", [MODEL_8200I_SE, MODEL_8100_V2, MODEL_8300I_SE])
+def test_multi_pass_allowed_below_native_only(model):
+    assert not gl128_multi_pass_allowed(model, 7200)
+    assert all(gl128_multi_pass_allowed(model, dpi) for dpi in model.resolutions_dpi if dpi != 7200)
+
+
+@pytest.mark.parametrize("run_kwargs", [{"multi_exposure": True}, {"n_passes": 2}])
+def test_scanner_rejects_7200_me_before_opening_asic(run_kwargs):
+    scanner = Scanner.open_fake(MODEL_8200I_SE)
+    try:
+        with pytest.raises(ScanError, match="7200 dpi"):
+            scanner.scan(resolution=7200, area=_TINY, apply_calib=False, **run_kwargs)
+        assert not scanner._asic._initialized
+    finally:
+        scanner.close()
+
+
+def test_se_single_pass_at_7200_still_floored():
+    assert _session_pass_tables(7200) == [(28000, 14000)]
+
+
+def test_se_me_below_7200_unchanged():
+    passes = _session_pass_tables(3600, multi_exposure=True)
+    assert len(passes) == 2
+    assert passes[0] == (7000, 14000)
+    long_ch, long_reg = passes[1]
+    assert long_ch == long_reg // 2
 
 
 def test_8300i_se_image_table_at_7200():

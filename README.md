@@ -38,13 +38,12 @@ Other OpticFilm models **enumerate and open**: you can read status, turn the lam
 
 - Color and infrared transparency scans at 150–7200 dpi (ASIC programs at ≥600 dpi; lower PPI shares the 600 dpi register set and is downsampled on the host; infrared is available only on supported hardware)
 - Infrared as a dust plane on `ScanImage.ir` (`mode="infrared"`, or `infrared=True` with colour; 8200i SE, 8300i SE, and 7600i v1 among the hardware-tested set)
-- Multi-exposure (ME) on GL128 hardware-tested models (8200i SE, 8100 V2, and 8300i SE): short + adaptive long colour passes with host SNR/IVW merge into `ScanImage.rgb` (`multi_exposure=True`); bracket planes via `Scanner.last_me_debug`
-- Multi-Pass on GL128: repeat an already-validated exposure `n_passes` times (1–9) and stack the aligned repeats for an SNR gain — no new exposure/speed value is ever introduced, only repeats of the short pass (`n_passes>1`) or, combined with `multi_exposure=True`, of both the short and long ME passes (Adaptive Multi-Pass); per-slot stacking stats via `Scanner.last_multi_pass_debug`
+- Multi-exposure (ME) on GL128 hardware-tested models (8200i SE, 8100 V2, and 8300i SE): short + adaptive long colour passes with host SNR/IVW merge into `ScanImage.rgb` (`multi_exposure=True`); bracket planes via `Scanner.last_me_debug`. Not available at 7200 dpi
+- Multi-Pass on GL128: repeat an already-validated exposure `n_passes` times (1–9) and stack the aligned repeats for an SNR gain — no new exposure/speed value is ever introduced, only repeats of the short pass (`n_passes>1`) or, combined with `multi_exposure=True`, of both the short and long ME passes (Adaptive Multi-Pass); per-slot stacking stats via `Scanner.last_multi_pass_debug`. Not available at 7200 dpi
 - Manual exposure overrides on GL128 (`single_pass_exposure` / `me_short_exposure` / `me_long_exposure`) for testing/debugging: bypass the adaptive/hardware-max clamps and write an exact `REG_EXPOSURE` value (24-bit register range)
 - Optional crop via normalized `area` (`x1, y1, x2, y2` in 0–1)
 - GL128 dark/white shading calibration with on-disk cache (`~/.cache/pyopticfilm/calib_v2.json`)
 - GL128 ASIC shading path (AFE codes + shading blob) aligned with SilverFast capture order
-- Adaptive quiet USB drain on GL128 (line-aligned; keeps motor creep continuous at high PPI)
 - Left–right orientation corrected in `ImagePipeline.assemble()` for `mirror_x` models
 - 16-bit RGB `numpy` output; optional TIFF export via `tifffile`
 - Progress and cancel hooks for long scans

@@ -24,7 +24,6 @@ from pathlib import Path
 
 import numpy as np
 
-from pyopticfilm.asic.gl128 import DEFAULT_IMAGE_USB_PACE_S
 from pyopticfilm.asic.registers import Gl128Registers
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.protocol import AsicDriver, FilmModel, Gl128Model
@@ -44,17 +43,8 @@ logger = get_logger(__name__)
 #: and (empirically) high-PPI creep is quieter than one giant unpaced preamble.
 IMAGE_CHUNK_BYTES = BULK_MAX_SIZE
 
-#: Quiet-drain on sentinel (any ``> 0`` enables pacing). Not a sleep ceiling.
-#: Matches :data:`pyopticfilm.asic.gl128.DEFAULT_IMAGE_USB_PACE_S` (on by default).
-IMAGE_USB_PACE_S = DEFAULT_IMAGE_USB_PACE_S
-
-#: Scale ASIC ``LPERIOD`` register to approximate output-line duration (seconds).
-#: Only the length of one quiet-drain sleep: the real line time depends on the
-#: ``0x8C`` clock, so pacing must never rely on it to keep up with the scanner.
-_LINE_PERIOD_TO_SECONDS = 1.0 / 4_500_000.0
-
 #: Environment variable naming a CSV that each image read appends per-chunk
-#: timing to (``dpi,quiet_drain,offset,bytes,read_s,sleep_s,gap_s``).
+#: timing to (``dpi,offset,bytes,read_s,gap_s``).
 ACQUIRE_TIMING_ENV = "PYOPTICFILM_ACQUIRE_TIMING"
 
 #: Low bits of ``0x1D`` for an image pass, by ASIC dpi (8200i SE 13_ppi_ladder,
@@ -87,6 +77,46 @@ def clamp_me_long(model: Gl128Model, resolution: int, exp_long: int) -> int:
     oversample = max(1, int(model.oversample_for(resolution)))
     hi = min(hi, _ME_CHANNEL_EXPOSURE_MAX * oversample)
     return min(max(int(exp_long), lo), hi)
+
+
+def native_line_floor(model: Gl128Model) -> int:
+    """Lowest per-channel table word for a driver-derived image pass at oversample 1.
+
+    Below ``exposure_short * native_image_exposure_factor`` (28000 on the
+    8200i SE / 8100 V2, 30000 on the 8300i SE) a full-width 7200 dpi line comes
+    out faster than USB drains it, and the motor stops and restarts.
+    """
+    factor = max(1, int(getattr(model, "native_image_exposure_factor", 1)))
+    return int(model.exposure_short) * factor
+
+
+def gl128_multi_pass_allowed(model: FilmModel, resolution: int) -> bool:
+    """Whether multi-exposure and Multi-Pass (``n_passes > 1``) may run at ``resolution``.
+
+    Not at oversample 1 (native 7200 dpi): on the 8200i SE the ME long pass
+    (64000) drained at about 1 MB/s and the scanner dropped off USB part way
+    through the frame.
+    """
+    oversample_for = getattr(model, "oversample_for", None)
+    if not callable(oversample_for):
+        return True
+    return int(oversample_for(int(resolution))) != 1
+
+
+def check_gl128_multi_pass(
+    model: FilmModel, resolution: int, *, multi_exposure: bool, n_passes: int
+) -> None:
+    """Raise :class:`ScanError` for multi-exposure / Multi-Pass where they are disabled."""
+    if not (multi_exposure or n_passes > 1):
+        return
+    if gl128_multi_pass_allowed(model, resolution):
+        return
+    mode = "multi_exposure=True" if multi_exposure else f"n_passes={n_passes}"
+    raise ScanError(
+        f"{mode} is not supported at {int(resolution)} dpi on {model.model}: "
+        "multi-exposure and Multi-Pass are disabled at native resolution. "
+        "Scan a single pass, or pick a lower resolution."
+    )
 
 
 try:
@@ -152,9 +182,6 @@ class Gl128ScanSession(ScanSession):
         #: (Scan Lab / debug) rather than a driver-derived value — set only
         #: for the duration of the pass that should write it verbatim.
         self._pass_manual: bool = False
-        #: False while an ME bracket runs: both passes keep the unscaled
-        #: channel table so their exposure ratio and the 16-bit limit hold.
-        self._pass_native_exposure_scale: bool = True
         #: Lab-only ME bracket / IVW stats (not on :class:`~pyopticfilm.image.ScanImage`).
         self.last_me_debug = None
         #: Lab-only Multi-Pass per-slot stacking stats, set when ``n_passes > 1``.
@@ -182,6 +209,11 @@ class Gl128ScanSession(ScanSession):
         validate_manual_exposure(me_short_exposure, label="me_short_exposure")
         validate_manual_exposure(me_long_exposure, label="me_long_exposure")
         validate_n_passes(n_passes)
+        geometry = kwargs.get("geometry")
+        resolution = getattr(geometry, "resolution", None) or kwargs.get("resolution", 1800)
+        check_gl128_multi_pass(
+            self.model, resolution, multi_exposure=multi_exposure, n_passes=n_passes
+        )
         if multi_exposure or n_passes > 1 or (infrared and kwargs.get("mode", "color") == "color"):
             if infrared and not getattr(self.model, "supports_infrared", False):
                 raise ScanError(
@@ -331,10 +363,9 @@ class Gl128ScanSession(ScanSession):
             channel_exp is not None
             and not shading
             and not self._pass_manual
-            and self._pass_native_exposure_scale
             and model.oversample_for(dpi) == 1
         ):
-            channel_exp *= int(getattr(model, "native_image_exposure_factor", 1))
+            channel_exp = max(channel_exp, native_line_floor(model))
         # Validate before any motor move below: an out-of-range channel_exp
         # (e.g. a manual-override exposure above the 16-bit AHB table) must
         # raise here rather than after position_for_full_frame_scan already
@@ -540,7 +571,6 @@ class Gl128ScanSession(ScanSession):
             self._pass_exposure = exposure
             self._pass_long_exposure = bool(long_pass)
             self._pass_manual = bool(manual)
-            self._pass_native_exposure_scale = not multi_exposure
             try:
                 raw = self.acquire_raw(
                     geometry,
@@ -554,7 +584,6 @@ class Gl128ScanSession(ScanSession):
                 self._pass_exposure = None
                 self._pass_long_exposure = False
                 self._pass_manual = False
-                self._pass_native_exposure_scale = True
 
             use_host = (
                 calib is not None
@@ -869,10 +898,6 @@ class Gl128ScanSession(ScanSession):
                 f"({expected_line}) at {geometry.resolution} dpi"
             )
 
-    def _line_interval_s(self, geometry: ScanGeometry) -> float:
-        lperiod = float(self.model.line_period_for(geometry.resolution))
-        return lperiod * _LINE_PERIOD_TO_SECONDS
-
     @staticmethod
     def _chunk_bytes(geometry: ScanGeometry, remaining: int) -> int:
         raw_line = getattr(geometry, "line_bytes", 0)
@@ -914,9 +939,7 @@ class Gl128ScanSession(ScanSession):
         buf = bytearray(total)
         view = memoryview(buf)
         got = 0
-        pace_on = float(getattr(self.asic, "image_usb_pace_s", IMAGE_USB_PACE_S) or 0.0) > 0
-        line_interval = self._line_interval_s(geometry) if pace_on else 0.0
-        timing: list[tuple[int, int, float, float, float]] = []
+        timing: list[tuple[int, int, float, float]] = []
         t_start = t_prev_end = time.perf_counter()
         try:
             while got < total:
@@ -925,7 +948,6 @@ class Gl128ScanSession(ScanSession):
                 remaining = total - got
                 want = self._chunk_bytes(geometry, remaining)
                 p0 = time.perf_counter()
-                t0 = time.monotonic()
                 proto.bulk_read_begin(want, index=index)
                 self._bulk_stream_active = True
                 try:
@@ -940,18 +962,11 @@ class Gl128ScanSession(ScanSession):
                 read_s = time.perf_counter() - p0
                 if progress is not None:
                     progress(min(1.0, got / total))
-                throttle = 0.0
-                if pace_on and line_interval > 0:
-                    elapsed = time.monotonic() - t0
-                    if not self._read_was_instant(n, elapsed):
-                        throttle = line_interval
-                        time.sleep(throttle)
-                end = time.perf_counter()
-                timing.append((got - n, n, read_s, throttle, p0 - t_prev_end))
-                t_prev_end = end
+                timing.append((got - n, n, read_s, p0 - t_prev_end))
+                t_prev_end = time.perf_counter()
         finally:
             view.release()
-            self._report_acquire_timing(geometry, timing, time.perf_counter() - t_start, pace_on)
+            self._report_acquire_timing(geometry, timing, time.perf_counter() - t_start)
 
         if progress is not None:
             progress(1.0)
@@ -970,29 +985,24 @@ class Gl128ScanSession(ScanSession):
     def _report_acquire_timing(
         cls,
         geometry: ScanGeometry,
-        timing: list[tuple[int, int, float, float, float]],
+        timing: list[tuple[int, int, float, float]],
         wall_s: float,
-        pace_on: bool,
     ) -> None:
         """Log one summary line per image read; optionally dump per-chunk CSV."""
         if not timing:
             return
         nbytes = sum(t[1] for t in timing)
-        sleep_s = sum(t[3] for t in timing)
         instant = sum(1 for t in timing if cls._read_was_instant(t[1], t[2]))
         longest_read = max(t[2] for t in timing)
-        longest_gap = max(t[4] for t in timing)
+        longest_gap = max(t[3] for t in timing)
         logger.info(
             "GL128 image read: %d dpi %.1f MB in %.1f s (%.2f MB/s) chunks=%d "
-            "quiet_drain=%s sleep=%.1f s instant_reads=%d longest_read=%.3f s "
-            "longest_gap=%.3f s",
+            "instant_reads=%d longest_read=%.3f s longest_gap=%.3f s",
             int(getattr(geometry, "resolution", 0) or 0),
             nbytes / 1e6,
             wall_s,
             nbytes / 1e6 / wall_s if wall_s > 0 else 0.0,
             len(timing),
-            pace_on,
-            sleep_s,
             instant,
             longest_read,
             longest_gap,
@@ -1005,12 +1015,10 @@ class Gl128ScanSession(ScanSession):
             new = not out.exists()
             with out.open("a", encoding="utf-8") as fh:
                 if new:
-                    fh.write("dpi,quiet_drain,offset,bytes,read_s,sleep_s,gap_s\n")
+                    fh.write("dpi,offset,bytes,read_s,gap_s\n")
                 dpi = int(getattr(geometry, "resolution", 0) or 0)
-                for off, n, read_s, sleep, gap in timing:
-                    fh.write(
-                        f"{dpi},{int(pace_on)},{off},{n},{read_s:.6f},{sleep:.6f},{gap:.6f}\n"
-                    )
+                for off, n, read_s, gap in timing:
+                    fh.write(f"{dpi},{off},{n},{read_s:.6f},{gap:.6f}\n")
             logger.info("GL128 image read timing appended to %s", out)
         except OSError as exc:
             logger.warning("Could not write %s=%s: %s", ACQUIRE_TIMING_ENV, path, exc)

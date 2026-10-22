@@ -90,12 +90,11 @@ scan-ready GL128 **8100 (V2)** (`07b3:1824`).
 | **Apply calib** | **On** (default). ASIC shading before colour prescan/scan; first run at each PPI/geometry measures once, then reuses `~/.cache/pyopticfilm/calib_v2.json`. Forced off when **Override safety HW gate** is on. |
 | **Clear calib cache** | Deletes cached shading entries; next scan re-measures at home. |
 | **USB planar RGB** | Off = chunky `RGBRGB…` (default). On = planar planes — try this if Prescan is rainbow-striped. |
-| **Adaptive quiet drain** | On (default). After a read that had to wait for the scanner, the host pauses about one line (~3.55 ms at 7200 dpi) so the scanner buffer never runs empty. It never pauses after a read the buffer served at once, so it cannot fall behind the scanner. Uncheck for flat-out drain. Each image pass logs a `GL128 image read:` timing line; set `PYOPTICFILM_ACQUIRE_TIMING=<path.csv>` before starting Scan Lab to also append per-chunk timing to that CSV. |
 | **Slow image slope** | Off (default). On: shading/slow motor ramp on the image pass (feeds stay fast). |
 | **Refresh devices** | Re-enumerate USB and rebuild the device list. |
 | **PPI** | Resolutions from the selected model’s `resolutions_dpi` (Scan only; Prescan uses a fixed low dpi). |
 | **IR pass** | After colour Scan, run a second infrared pass (disabled if the model has no IR). |
-| **Multi-exposure (ME)** | GL128 / hardware-tested models: short + adaptive long colour passes. Long clamp is 14k–85k, except 14k–64k at 7200 dpi (oversample 1, under the AHB table's 16-bit width). Fallback 42000. Host SNR/IVW merge into ``rgb``. Bracket planes on ``Scanner.last_me_debug`` (not ``ScanImage``). |
+| **Multi-exposure (ME)** | GL128 / hardware-tested models: short + adaptive long colour passes. Disabled at 7200 dpi, together with **Passes** (Multi-Pass); both reset when you pick 7200. Long clamp is 14k–85k. Fallback 42000. Host SNR/IVW merge into ``rgb``. Bracket planes on ``Scanner.last_me_debug`` (not ``ScanImage``). |
 | **Manual exposure overrides** | GL128 debug/testing only — see [Manual exposure overrides](#manual-exposure-overrides) below. |
 | **Prescan** | Low-res preview (GL128: 1200 dpi safe window; non-scan-ready: lowest dpi + short Y strip). |
 | **Scan** | Colour scan at the chosen PPI; optional IR and/or ME. Uses the prescan crop when one is set (clamped on non-scan-ready). |
@@ -114,7 +113,7 @@ debugging/testing, bypassing the driver's normal soft limits:
 |-------|----------|------------------|
 | **Single-pass exposure** | The retained Scan pass when ME is off. | Model-derived exposure, still clamped to the hardware max. |
 | **ME short exposure** | The ME short pass only. | Model-derived short exposure, still clamped to the hardware max. |
-| **ME long exposure** | The ME long pass only; overrides adaptive selection entirely. | Normal adaptive selection (14k–85k, 14k–64k at 7200 dpi). |
+| **ME long exposure** | The ME long pass only; overrides adaptive selection entirely. | Normal adaptive selection (14k–85k). |
 
 Each field is grayed out when it does not apply to the current pass selection
 (e.g. the single-pass field while ME is on). A value is written to
@@ -249,11 +248,11 @@ with `python -m tools.register_reference` after editing the catalog.
   overrun the motor window.
 - Rubber-band crops are clamped so image `LINCNT` cannot past the scan-window
   end (see `captures/8200i-se/MOTOR.md` in the repo if present).
-- High PPI (≥2400) uses line-aligned bulk drain; **Adaptive quiet drain** pauses
-  one line only after a read that waited for the scanner, so the host stays just
-  behind the line clock without ever losing ground on large crops.
-  Uncheck for flat-out drain. **Slow image slope** is an optional acoustic
-  probe (feeds stay fast).
+- High PPI (≥2400) uses line-aligned bulk drain, read as fast as USB allows.
+  Each image pass prints a `GL128 image read:` timing line (MB/s, instant reads,
+  longest gap) to the terminal Scan Lab was started from; set `PYOPTICFILM_ACQUIRE_TIMING=<path.csv>` before starting
+  Scan Lab to also append per-chunk timing to that CSV. **Slow image slope** is
+  an optional acoustic probe (feeds stay fast).
 - 8100 V2 has no IR; leave **IR pass** off on that model. 8200i SE and 8300i SE
   support IR.
 

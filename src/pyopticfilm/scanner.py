@@ -289,6 +289,15 @@ class Scanner:
         validate_manual_exposure(me_short_exposure, label="me_short_exposure")
         validate_manual_exposure(me_long_exposure, label="me_long_exposure")
         validate_n_passes(n_passes)
+        if getattr(self._model, "asic", "") == "GL128":
+            from pyopticfilm.scan.session_gl128 import check_gl128_multi_pass
+
+            check_gl128_multi_pass(
+                self._model,
+                int(getattr(geometry, "resolution", None) or resolution),
+                multi_exposure=multi_exposure,
+                n_passes=n_passes,
+            )
         self._ensure_scan_ready()
         self._ensure_open()
         if not self._asic._initialized:

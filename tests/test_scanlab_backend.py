@@ -133,25 +133,20 @@ def test_lab_crop_scan_meta_se():
 
 
 def test_apply_lab_motor_acoustic_flags():
-    from pyopticfilm.scan.session_gl128 import IMAGE_USB_PACE_S
-
     scanner = MagicMock()
     asic = MagicMock()
     scanner._asic = asic
     target = with_motor_acoustic(
         LabTarget(label="x", model=MODEL_8200I_SE),
-        quiet_usb_pace=True,
         slow_image_slope=True,
     )
     apply_lab_motor_acoustic(scanner, target)
     assert asic.image_slope_slow is True
-    assert asic.image_usb_pace_s == IMAGE_USB_PACE_S
     apply_lab_motor_acoustic(
         scanner,
-        with_motor_acoustic(target, quiet_usb_pace=False, slow_image_slope=False),
+        with_motor_acoustic(target, slow_image_slope=False),
     )
     assert asic.image_slope_slow is False
-    assert asic.image_usb_pace_s == 0.0
 
 
 def test_open_real_without_connected_device_raises():

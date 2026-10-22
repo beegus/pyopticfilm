@@ -193,13 +193,6 @@ def _u16_table_bytes(words: tuple[int, ...]) -> bytes:
     return bytes(out)
 
 
-#: Default adaptive quiet USB drain on GL128 image acquire (on/off sentinel).
-#: Any value ``> 0`` enables pacing; ``0`` is flat-out drain. Not a sleep
-#: length — ``_acquire`` sleeps one estimated line after a read that had to wait
-#: for the scanner, and never after a read the scanner buffer served at once.
-DEFAULT_IMAGE_USB_PACE_S = 0.003
-
-
 class Gl128:
     """GL128 chip operations for OpticFilm 8200i SE, 8100 (V2), and 8300i SE."""
 
@@ -242,9 +235,6 @@ class Gl128:
         self.last_color_shading_host_ok: bool = False
         #: Lab acoustic A/B: use ``SLOPE_TABLE_SLOW`` for non-shading table uploads.
         self.image_slope_slow: bool = False
-        #: Quiet USB drain flag: ``> 0`` paces bulk reads to ``LPERIOD``;
-        #: ``0`` drains flat-out (louder motor creep).
-        self.image_usb_pace_s: float = DEFAULT_IMAGE_USB_PACE_S
 
     def _require_motor_enabled(self) -> None:
         if not self._motor_moves_enabled:

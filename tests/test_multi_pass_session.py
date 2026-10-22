@@ -143,11 +143,13 @@ def test_invalid_manual_long_exposure_raises_before_carriage_moves():
     session.asic.position_for_full_frame_scan = spy
     with pytest.raises(ValueError):
         session.run(
-            resolution=7200,
+            resolution=3600,
             area=_TINY,
             apply_calib=False,
             multi_exposure=True,
-            me_long_exposure=90000,  # > 0xFFFF, manual override bypasses me_hardware_max_exposure
+            # 3600 dpi halves the table word: 140000 / 2 > 0xFFFF. Manual
+            # overrides bypass me_hardware_max_exposure.
+            me_long_exposure=140000,
         )
     # The short pass (valid exposure) legitimately moves once; the long
     # pass's own invalid exposure must raise before ITS motor move, so the
