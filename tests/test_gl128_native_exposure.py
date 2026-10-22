@@ -15,6 +15,24 @@ from pyopticfilm.scan.geometry import compute_geometry
 from pyopticfilm.scan.session_gl128 import Gl128ScanSession
 
 
+def _image_regs(model, dpi: int) -> dict[int, int]:
+    asic = MagicMock()
+    asic._motor_moves_enabled = False
+    asic.last_afe = None
+    asic.asic_shading_ready = True
+    session = Gl128ScanSession(asic, model)
+    session.se_regs = Gl128Registers()
+    session._lamp_requested = True
+    session._configure(compute_geometry(dpi, model=model, area=None))
+    return dict(asic.protocol.write_registers_batched.call_args[0][0])
+
+
+@pytest.mark.parametrize("model", [MODEL_8200I_SE, MODEL_8100_V2, MODEL_8300I_SE])
+@pytest.mark.parametrize(("dpi", "reg_1d"), [(3600, 0x80), (7200, 0x81)])
+def test_image_reg_0x1d_matches_vendor(model, dpi, reg_1d):
+    assert _image_regs(model, dpi)[0x1D] == reg_1d
+
+
 def _configure(model, dpi: int, **pass_state) -> tuple[int, int]:
     asic = MagicMock()
     asic._motor_moves_enabled = False

@@ -57,6 +57,13 @@ _LINE_PERIOD_TO_SECONDS = 1.0 / 4_500_000.0
 #: timing to (``dpi,quiet_drain,offset,bytes,read_s,sleep_s,gap_s``).
 ACQUIRE_TIMING_ENV = "PYOPTICFILM_ACQUIRE_TIMING"
 
+#: Low bits of ``0x1D`` for an image pass, by ASIC dpi (8200i SE 13_ppi_ladder,
+#: 8100 V2 04_color_7200). SilverFast writes ``0x81`` before a 7200 dpi image;
+#: with ``0x80`` a full-width line outruns USB and the motor stops and restarts.
+_IMAGE_REG_1D_LOW_BY_DPI: dict[int, int] = {7200: 0x01}
+_REG_1D = 0x1D
+_REG_1D_LOW_MASK = 0x1F
+
 #: AHB per-channel exposure words are 16-bit. At oversample == 1 (native
 #: optical resolution, 7200 dpi) ``channel_exposure_for`` copies
 #: ``REG_EXPOSURE`` into that table unmasked. A value at or above 65536 wraps
@@ -260,6 +267,10 @@ class Gl128ScanSession(ScanSession):
         # cache would clear IR LED or re-enable the white lamp.
         cache.pop(r.REG_0x03, None)
         cache.pop(r.REG_IR, None)
+
+        if not shading:
+            low = _IMAGE_REG_1D_LOW_BY_DPI.get(model.asic_dpi_for(dpi), 0)
+            cache[_REG_1D] = (cache.get(_REG_1D, 0x80) & ~_REG_1D_LOW_MASK) | low
 
         motor = r.MTRPWR
         if not shading:
