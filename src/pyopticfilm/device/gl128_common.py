@@ -543,6 +543,12 @@ class Gl128Common:
         base = int(exposure if exposure is not None else self.exposure_lperiod)
         return base // self.oversample_for(resolution)
 
+    def scan_motor_table(self, period: int) -> tuple[int, ...]:
+        """Words for AHB ``0x10000000``/``0x10004000``/``0x10008000``: flat ``period``."""
+        from pyopticfilm.device.tables_8200i_se import exposure_table
+
+        return exposure_table(period)
+
     def pixel_clock_for_image(self, resolution: int, *, long_exposure: bool = False) -> int:
         """``0xA5``/``0xAB`` for an image pass at ``resolution``."""
         key = self.asic_dpi_for(resolution)

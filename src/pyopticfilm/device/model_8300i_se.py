@@ -48,7 +48,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from pyopticfilm.device.gl128_common import LADDER_LINCNT_BY_DPI, SCAN_REGS, Gl128Common
-from pyopticfilm.device.tables_8300i_se import SLOPE_TABLE_FAST, SLOPE_TABLE_SLOW
+from pyopticfilm.device.tables_8300i_se import (
+    SLOPE_TABLE_FAST,
+    SLOPE_TABLE_SLOW,
+    scan_motor_table,
+)
 
 # Per-scan sensor/AFE timing overlay. SilverFast writes these before every AFE,
 # shading and image acquire at every measured PPI, IR included (docs §10.7).
@@ -245,10 +249,9 @@ class Model8300iSE(Gl128Common):
     asic_clock_scan_0x8c: int = 0x0D
     # Plug-in capture: 0x0B = 0x84, 0x13 = 0x0F, 0x0B = 0x8C after the boot clock.
     asic_boot_0x0b: int = 0x8C
-    #: 30000 per channel at 7200 dpi (REG_EXPOSURE 15000). SilverFast keeps the
-    #: tables at 15000 and drains about 8.3 MB/s; at 15000 our image read falls
-    #: behind about halfway through a full-width frame and the motor thrashes.
-    native_image_exposure_factor: int = 2
+    #: The ``0x1D=0x81`` doubling at 7200 dpi is already in
+    #: :meth:`channel_exposure_for`, which gives 15000 there like SilverFast.
+    native_image_exposure_factor: int = 1
     #: About 8 full-width 7200 dpi lines per announce and bulk request. One
     #: announce plus two bulk reads per line, as on the SE, drained slower than
     #: SilverFast's continuous stream of 61952-byte reads.
@@ -275,6 +278,22 @@ class Model8300iSE(Gl128Common):
         """Host column unstagger; see ``_STAGGER_BY_DPI_8300I``."""
         key = self.asic_dpi_for(resolution)
         return tuple(_STAGGER_BY_DPI_8300I.get(key, ()))
+
+    def channel_exposure_for(self, resolution: int, *, exposure: int | None = None) -> int:
+        """Scan motor period: ``exposure × ((0x1D & 0x1F) + 1) × asic_dpi / 14400``.
+
+        Half the SE/V2 ``exposure // oversample`` at every PPI in the SilverFast
+        captures (1875 at 1800 dpi, 3750 at 3600, 15000 at 7200 with
+        ``0x1D=0x81``; ME-long 60000 gives 15000 at 3600).
+        """
+        base = int(exposure if exposure is not None else self.exposure_lperiod)
+        oversample = self.oversample_for(resolution)
+        reg_1d_lines = 2 if oversample == 1 else 1
+        return base * reg_1d_lines // (2 * oversample)
+
+    def scan_motor_table(self, period: int) -> tuple[int, ...]:
+        """Vendor acceleration ramp clamped at ``period`` (head 40404)."""
+        return scan_motor_table(period)
 
     def slope_table_fast(self) -> tuple[int, ...]:
         """8300i CUSTOM fast ramp (head ``0x846A``)."""

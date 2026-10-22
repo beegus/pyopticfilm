@@ -85,7 +85,7 @@ def native_line_floor(model: Gl128Model) -> int:
     """Lowest per-channel table word for a driver-derived image pass at oversample 1.
 
     Below ``exposure_short * native_image_exposure_factor`` (28000 on the
-    8200i SE / 8100 V2, 30000 on the 8300i SE) a full-width 7200 dpi line comes
+    8200i SE / 8100 V2, 15000 on the 8300i SE) a full-width 7200 dpi line comes
     out faster than USB drains it, and the motor stops and restarts.
     """
     factor = max(1, int(getattr(model, "native_image_exposure_factor", 1)))
