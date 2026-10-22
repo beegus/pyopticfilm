@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -78,18 +79,20 @@ def _announces(model, geometry):
     return begins, proto.bulk_read_exact.call_args_list
 
 
-def test_8300i_se_reads_eight_full_width_lines_per_announce():
+@pytest.mark.parametrize("model", [MODEL_8200I_SE, MODEL_8300I_SE])
+def test_one_announce_per_full_width_7200_line(model):
     line = 62208  # 10368 px x 3 channels x 2 bytes at 7200 dpi
-    begins, reads = _announces(MODEL_8300I_SE, _geometry(20 * line, line))
-    assert begins == [8 * line, 8 * line, 4 * line]
-    assert [c.kwargs for c in reads] == [{"max_transfer": 0x80000}] * 3
-
-
-def test_se_keeps_one_announce_per_line():
-    line = 62208
-    begins, reads = _announces(MODEL_8200I_SE, _geometry(3 * line, line))
+    begins, reads = _announces(model, _geometry(3 * line, line))
     assert begins == [line] * 3
     assert [c.kwargs for c in reads] == [{}] * 3
+
+
+def test_large_chunk_model_passes_max_transfer():
+    line = 62208
+    model = replace(MODEL_8300I_SE, image_read_chunk_bytes=0x80000)
+    begins, reads = _announces(model, _geometry(20 * line, line))
+    assert begins == [8 * line, 8 * line, 4 * line]
+    assert [c.kwargs for c in reads] == [{"max_transfer": 0x80000}] * 3
 
 
 def test_bulk_read_exact_max_transfer_sets_request_size():
@@ -116,3 +119,14 @@ def test_timing_summary_logged_and_csv_appended(tmp_path, monkeypatch, caplog):
     assert rows[0] == "dpi,offset,bytes,read_s,gap_s"
     assert len(rows) == 1 + 4
     assert [r.split(",")[1:3] for r in rows[1:3]] == [["0", "4"], ["4", "4"]]
+
+
+def test_timing_csv_written_when_the_read_fails(tmp_path, monkeypatch):
+    out = tmp_path / "timing.csv"
+    monkeypatch.setenv(ACQUIRE_TIMING_ENV, str(out))
+    session = _session([b"\x00" * 4, OSError("scanner powered off")])
+    with patch.object(Gl128ScanSession, "_wait_data"), pytest.raises(OSError):
+        session._acquire(_geometry(12, 4), progress=None, cancel=None)
+    rows = out.read_text(encoding="utf-8").splitlines()
+    assert rows == ["dpi,offset,bytes,read_s,gap_s", rows[1]]
+    assert rows[1].split(",")[1:3] == ["0", "4"]

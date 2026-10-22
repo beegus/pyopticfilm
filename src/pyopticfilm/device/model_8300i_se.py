@@ -252,10 +252,9 @@ class Model8300iSE(Gl128Common):
     #: The ``0x1D=0x81`` doubling at 7200 dpi is already in
     #: :meth:`channel_exposure_for`, which gives 15000 there like SilverFast.
     native_image_exposure_factor: int = 1
-    #: About 8 full-width 7200 dpi lines per announce and bulk request. One
-    #: announce plus two bulk reads per line, as on the SE, drained slower than
-    #: SilverFast's continuous stream of 61952-byte reads.
-    image_read_chunk_bytes: int = 0x80000
+    #: 512 KiB announces crashed the motor mid-pass at 1800 and 7200 dpi on
+    #: hardware with the SilverFast scan motor table.
+    image_read_chunk_bytes: int = 0xF000
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False
