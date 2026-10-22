@@ -122,6 +122,7 @@ class Model8200iSE(Gl128Common):
     #: ``REG_EXPOSURE`` 14000. At 14000 a full-width line outruns USB and the
     #: motor stops and restarts every few seconds.
     native_image_exposure_factor: int = 2
+    image_read_chunk_bytes: int = 0xF000
     pixel_clock_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(PIXEL_CLOCK_BY_DPI)
     )

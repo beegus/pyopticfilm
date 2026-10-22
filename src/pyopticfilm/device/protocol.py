@@ -148,6 +148,9 @@ class Gl128Model(FilmModel, Protocol):
     #: Multiplier on the per-channel exposure table for a single-pass image at
     #: native optical resolution (oversample 1). ``REG_EXPOSURE`` is unchanged.
     native_image_exposure_factor: int
+    #: Max bytes per image ``VALUE_BUFFER`` announce and per bulk IN request
+    #: (whole lines when a line fits).
+    image_read_chunk_bytes: int
     ladder_feed2_steps: int
     ladder_lincnt_by_dpi: Mapping[int, int]
 

@@ -245,9 +245,14 @@ class Model8300iSE(Gl128Common):
     asic_clock_scan_0x8c: int = 0x0D
     # Plug-in capture: 0x0B = 0x84, 0x13 = 0x0F, 0x0B = 0x8C after the boot clock.
     asic_boot_0x0b: int = 0x8C
-    #: 30000 per channel at 7200 dpi (REG_EXPOSURE 15000), the 8200i SE vendor
-    #: rule; not yet confirmed by an 8300i SE 7200 dpi capture.
+    #: 30000 per channel at 7200 dpi (REG_EXPOSURE 15000). SilverFast keeps the
+    #: tables at 15000 and drains about 8.3 MB/s; at 15000 our image read falls
+    #: behind about halfway through a full-width frame and the motor thrashes.
     native_image_exposure_factor: int = 2
+    #: About 8 full-width 7200 dpi lines per announce and bulk request. One
+    #: announce plus two bulk reads per line, as on the SE, drained slower than
+    #: SilverFast's continuous stream of 61952-byte reads.
+    image_read_chunk_bytes: int = 0x80000
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False

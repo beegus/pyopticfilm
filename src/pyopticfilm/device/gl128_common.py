@@ -274,6 +274,7 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "asic_clock_scan_0x8c",
         "asic_boot_0x0b",
         "native_image_exposure_factor",
+        "image_read_chunk_bytes",
     }
 )
 

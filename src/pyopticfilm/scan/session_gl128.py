@@ -9,13 +9,15 @@ stay in :class:`~pyopticfilm.scan.session.ScanSession`. What differs from GL845:
 * motor slope tables are replayed from the capture rather than generated, so
   there is no ``zmod`` calculation;
 * feeding is a separate, synchronous move before the scan starts;
-* the image is streamed with USB-sized ``VALUE_BUFFER`` announces (a single
-  full-image preamble was louder on real GL128 hardware); source is selected
-  with ``wIndex`` — RAM for calibration, live stream for a scan.
+* the image is streamed with ``VALUE_BUFFER`` announces of at most
+  ``model.image_read_chunk_bytes`` (a single full-image preamble was louder on
+  real GL128 hardware); source is selected with ``wIndex`` — RAM for
+  calibration, live stream for a scan.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 import threading
 import time
@@ -38,9 +40,9 @@ from pyopticfilm.usb.device import BULK_MAX_SIZE
 
 logger = get_logger(__name__)
 
-#: Max bytes announced per ``bulk_read_begin``. SilverFast uses one preamble for
-#: the whole image; Lab keeps USB-sized announces so cancel can abort cleanly
-#: and (empirically) high-PPI creep is quieter than one giant unpaced preamble.
+#: Default max bytes announced per ``bulk_read_begin`` when the model sets no
+#: ``image_read_chunk_bytes``. SilverFast uses one preamble for the whole image;
+#: chunked announces let cancel stop between chunks with no transfer in flight.
 IMAGE_CHUNK_BYTES = BULK_MAX_SIZE
 
 #: Environment variable naming a CSV that each image read appends per-chunk
@@ -894,17 +896,19 @@ class Gl128ScanSession(ScanSession):
             )
 
     @staticmethod
-    def _chunk_bytes(geometry: ScanGeometry, remaining: int) -> int:
+    def _chunk_bytes(
+        geometry: ScanGeometry, remaining: int, max_bytes: int = IMAGE_CHUNK_BYTES
+    ) -> int:
         raw_line = getattr(geometry, "line_bytes", 0)
         try:
             line = max(1, int(raw_line))
         except (TypeError, ValueError):
-            line = IMAGE_CHUNK_BYTES
+            line = max_bytes
         if remaining <= line:
             return remaining
-        if line > IMAGE_CHUNK_BYTES:
+        if line > max_bytes:
             return min(line, remaining)
-        full_lines = min(remaining // line, IMAGE_CHUNK_BYTES // line)
+        full_lines = min(remaining // line, max_bytes // line)
         if full_lines >= 1:
             return full_lines * line
         return min(line, remaining)
@@ -929,6 +933,13 @@ class Gl128ScanSession(ScanSession):
             else r.BULK_INDEX_IMAGE
         )
 
+        chunk_max = max(1, int(getattr(self.model, "image_read_chunk_bytes", IMAGE_CHUNK_BYTES)))
+        read_exact = (
+            proto.bulk_read_exact
+            if chunk_max <= BULK_MAX_SIZE
+            else functools.partial(proto.bulk_read_exact, max_transfer=chunk_max)
+        )
+
         # Filled in place: growing a bytearray to a 1.7 GB frame reallocates it
         # repeatedly while the scanner keeps producing lines.
         buf = bytearray(total)
@@ -941,12 +952,12 @@ class Gl128ScanSession(ScanSession):
                 if cancel is not None and cancel.is_set():
                     raise ScanCancelled("cancelled during bulk read")
                 remaining = total - got
-                want = self._chunk_bytes(geometry, remaining)
+                want = self._chunk_bytes(geometry, remaining, chunk_max)
                 p0 = time.perf_counter()
                 proto.bulk_read_begin(want, index=index)
                 self._bulk_stream_active = True
                 try:
-                    chunk = proto.bulk_read_exact(want)
+                    chunk = read_exact(want)
                 finally:
                     self._bulk_stream_active = False
                 if not chunk:
