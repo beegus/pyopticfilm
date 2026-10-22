@@ -91,16 +91,11 @@ def native_line_floor(model: Gl128Model) -> int:
 
 
 def gl128_multi_pass_allowed(model: FilmModel, resolution: int) -> bool:
-    """Whether multi-exposure and Multi-Pass (``n_passes > 1``) may run at ``resolution``.
-
-    Not at oversample 1 (native 7200 dpi): on the 8200i SE the ME long pass
-    (64000) drained at about 1 MB/s and the scanner dropped off USB part way
-    through the frame.
-    """
-    oversample_for = getattr(model, "oversample_for", None)
-    if not callable(oversample_for):
+    """Whether multi-exposure and Multi-Pass (``n_passes > 1``) may run at ``resolution``."""
+    allowed_at = getattr(model, "multi_pass_allowed_at", None)
+    if not callable(allowed_at):
         return True
-    return int(oversample_for(int(resolution))) != 1
+    return bool(allowed_at(int(resolution)))
 
 
 def check_gl128_multi_pass(

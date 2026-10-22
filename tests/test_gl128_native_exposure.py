@@ -126,6 +126,9 @@ def test_se_me_and_multi_pass_rejected_at_7200_before_any_pass(run_kwargs):
 def test_multi_pass_allowed_below_native_only(model):
     assert not gl128_multi_pass_allowed(model, 7200)
     assert all(gl128_multi_pass_allowed(model, dpi) for dpi in model.resolutions_dpi if dpi != 7200)
+    below_native = tuple(dpi for dpi in model.resolutions_dpi if dpi != 7200)
+    assert model.multi_exposure_resolutions_dpi == below_native
+    assert model.multi_pass_resolutions_dpi == below_native
 
 
 @pytest.mark.parametrize("run_kwargs", [{"multi_exposure": True}, {"n_passes": 2}])

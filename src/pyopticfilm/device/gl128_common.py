@@ -476,6 +476,25 @@ class Gl128Common:
         """Native lines the ASIC returns per *ASIC* output line."""
         return max(1, self.optical_resolution // self.asic_dpi_for(resolution))
 
+    def multi_pass_allowed_at(self, resolution: int) -> bool:
+        """Whether multi-exposure and Multi-Pass may run at ``resolution``.
+
+        Not at oversample 1 (native 7200 dpi): on the 8200i SE the ME long pass
+        (64000) drained at about 1 MB/s and the scanner dropped off USB part way
+        through the frame.
+        """
+        return self.oversample_for(resolution) != 1
+
+    @property
+    def multi_exposure_resolutions_dpi(self) -> tuple[int, ...]:
+        """Resolutions where ``scan(multi_exposure=True)`` is accepted."""
+        return tuple(dpi for dpi in self.resolutions_dpi if self.multi_pass_allowed_at(dpi))
+
+    @property
+    def multi_pass_resolutions_dpi(self) -> tuple[int, ...]:
+        """Resolutions where ``scan(n_passes > 1)`` is accepted."""
+        return tuple(dpi for dpi in self.resolutions_dpi if self.multi_pass_allowed_at(dpi))
+
     def line_period_for(self, resolution: int) -> int:
         """Value for ``LPERIOD`` (``0x28``) at ``resolution``."""
         key = self.asic_dpi_for(resolution)

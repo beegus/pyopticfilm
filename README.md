@@ -201,6 +201,19 @@ simplified consumer UI typically only needs these four combinations, named as fo
 | Adaptive Multi-Exposure      | `True`  | `1` |
 | Adaptive Multi-Pass          | `True`  | `2`–`9` |
 
+**Resolution limits.** Multi-exposure and Multi-Pass are not available at every
+resolution: on the GL128 models they are off at 7200 dpi. Before offering them
+for a resolution, check the model; `scan()` raises `ScanError` otherwise. Models
+without the attributes don't support the mode at all.
+
+```python
+model = scanner.model
+me_dpis = getattr(model, "multi_exposure_resolutions_dpi", ())   # e.g. (3600, 2400, ...) — no 7200
+stack_dpis = getattr(model, "multi_pass_resolutions_dpi", ())     # n_passes > 1
+offer_me = dpi in me_dpis
+offer_multi_pass = dpi in stack_dpis
+```
+
 The three manual exposure overrides above are lab/debug-only —
 Scan Lab (`tools/scanlab/`) is the reference implementation exposing the full, unrestricted
 parameter set; NegPy is the reference implementation of the simplified 4-combination surface.
