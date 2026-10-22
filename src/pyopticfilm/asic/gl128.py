@@ -167,6 +167,15 @@ _BOOT_BLOB_ADDR_B = 0x000FFF01
 _BOOT_BLOB_A = bytes(34)
 _BOOT_BLOB_B = bytes(32) + bytes((0x33, 0x00))
 
+#: ``0x0B`` top bits select the clock and must agree with ``0x8C``; bit 3
+#: enables DRAM. After the boot clock the vendor toggles DRAM enable off and on
+#: with ``0x13=0x0F`` in between, and the next register blast puts ``0x13``
+#: back to its boot value.
+_REG_CLK_DRAM = 0x0B
+_DRAM_ENABLE = 0x08
+_REG_0x13 = 0x13
+_DRAM_INIT_0x13 = 0x0F
+
 #: Image cancel / end-scan lamp writes on ``0x03`` (sessions 03 return-home,
 #: 08b/08c Cancel). Pre-clear pair, then clear ``SCAN`` to ``0x22``, then post.
 _CANCEL_LAMP_PRE: tuple[int, ...] = (0x30, 0x20)
@@ -182,13 +191,6 @@ def _u16_table_bytes(words: tuple[int, ...]) -> bytes:
         out[2 * i] = word & 0xFF
         out[2 * i + 1] = (word >> 8) & 0xFF
     return bytes(out)
-
-
-#: Default adaptive quiet USB drain on GL128 image acquire (on/off sentinel).
-#: Any value ``> 0`` enables LPERIOD-matched pacing; ``0`` is flat-out drain
-#: (louder motor). Not a per-line sleep ceiling — ``_acquire`` sleeps the full
-#: line-period deficit (plus a small lag) when the host outran the ASIC.
-DEFAULT_IMAGE_USB_PACE_S = 0.003
 
 
 class Gl128:
@@ -233,9 +235,6 @@ class Gl128:
         self.last_color_shading_host_ok: bool = False
         #: Lab acoustic A/B: use ``SLOPE_TABLE_SLOW`` for non-shading table uploads.
         self.image_slope_slow: bool = False
-        #: Quiet USB drain flag: ``> 0`` paces bulk reads to ``LPERIOD``;
-        #: ``0`` drains flat-out (louder motor creep).
-        self.image_usb_pace_s: float = DEFAULT_IMAGE_USB_PACE_S
 
     def _require_motor_enabled(self) -> None:
         if not self._motor_moves_enabled:
@@ -588,41 +587,24 @@ class Gl128:
             strip = self.acquire_afe_strip(AFE_STRIP_BYTES)
             return channel_means_u16(strip, planar=False)
 
-        gain_seed = (0, 0, 0)
-        if infrared:
-            # IR gain hunt under white lamp off / IR LED on.
-            self.lamp_off()
-            time.sleep(0.2)
-
-            def apply_gains(gains: tuple[int, int, int]) -> tuple[float, float, float]:
-                return measure(AfeFrontend(gains=gains, offsets=(0x80, 0x80, 0x80)))
-
-            gains = search_afe_codes(
-                initial=gain_seed,
-                code_max=cfg.gain_max,
-                target=float(cfg.offset_target),
-                iterations=cfg.iterations,
-                tolerance=cfg.tolerance,
-                code_increases_mean=cfg.gain_increases_mean,
-                apply=apply_gains,
-            )
-            self.lamp_on()
-            time.sleep(0.5)
-        else:
-            # SF: wide strip + coarse gains with lamp still on; no dichotomy.
-            self.apply_frontend(AfeFrontend(gains=(0, 0, 0), offsets=(0x80, 0x80, 0x80)))
-            wide = self.acquire_afe_strip(AFE_WIDE_BYTES)
-            wide_means = channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False)
-            gains = coarse_gains_from_wide_means(wide_means)
-            gain_seed = gains
-            logger.info(
-                "GL128 AFE wide strip (lamp on) means=(%.0f,%.0f,%.0f) coarse_gains=%s",
-                wide_means[0],
-                wide_means[1],
-                wide_means[2],
-                gains,
-            )
-            time.sleep(0.5)
+        # SF (colour and IR alike, 8200i SE session 05 / 8300i captures): wide
+        # strip + coarse gains under the method's light, no gain dichotomy. IR
+        # keeps the IR LED on and the white lamp off (lamp_on in IR mode); never
+        # lamp_off() here — it clears the IR LED too and the gains run away.
+        self.apply_frontend(AfeFrontend(gains=(0, 0, 0), offsets=(0x80, 0x80, 0x80)))
+        wide = self.acquire_afe_strip(AFE_WIDE_BYTES)
+        wide_means = channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False)
+        gains = coarse_gains_from_wide_means(wide_means)
+        gain_seed = gains
+        logger.info(
+            "GL128 AFE wide strip (%s) means=(%.0f,%.0f,%.0f) coarse_gains=%s",
+            "IR LED" if infrared else "lamp on",
+            wide_means[0],
+            wide_means[1],
+            wide_means[2],
+            gains,
+        )
+        time.sleep(0.5)
 
         def _encode(values: tuple[int, int, int]) -> tuple[int, int, int]:
             return (encode_afe_offset(values[0]), encode_afe_offset(values[1]), encode_afe_offset(values[2]))
@@ -1246,6 +1228,11 @@ class Gl128:
         self.protocol.write_ahb(_BOOT_BLOB_ADDR_A, _BOOT_BLOB_A)
         self.protocol.write_ahb(_BOOT_BLOB_ADDR_B, _BOOT_BLOB_B)
         self._write_many(dict(self.model.init_regs))
+        self._write_clock(int(self.model.asic_clock_boot_0x8c))
+        dram = int(self.model.asic_boot_0x0b)
+        self._write(_REG_CLK_DRAM, dram & ~_DRAM_ENABLE)
+        self._write(_REG_0x13, _DRAM_INIT_0x13)
+        self._write(_REG_CLK_DRAM, dram | _DRAM_ENABLE)
         self._write_many(dict(self.model.memory_layout_regs))
         self.set_frontend_init()
         self._write_many(dict(self.model.gpo_regs))
@@ -1255,6 +1242,28 @@ class Gl128:
             len(self.model.memory_layout_regs),
             len(self.model.gpo_regs),
         )
+
+    def _write_clock(self, value: int) -> None:
+        self.protocol.write_0x8c(0x10, value)
+        self.protocol.write_0x8c(0x13, value)
+
+    def enter_scan_clock(self) -> None:
+        """Switch to the scan clock the way the vendor opens every scan pass.
+
+        The boot value goes out first, then the scan value (8300i SE:
+        ``0x0E`` then ``0x0D``), then ``0x0B`` and ``0x13`` at their scan
+        values as in the vendor's following register blast. Calibration and
+        image both run on it.
+        """
+        if not self._initialized:
+            self.init()
+        boot = int(self.model.asic_clock_boot_0x8c)
+        scan = int(self.model.asic_clock_scan_0x8c)
+        self._write_clock(boot)
+        self._write_clock(scan)
+        self._write(_REG_CLK_DRAM, int(self.model.sensor_custom_regs[_REG_CLK_DRAM]))
+        self._write(_REG_0x13, int(self.model.init_regs[_REG_0x13]))
+        logger.debug("GL128 scan clock 0x8C: %#04x -> %#04x", boot, scan)
 
     def init(self, *, force: bool = False) -> None:
         if self._initialized and not force:
@@ -1281,8 +1290,12 @@ class Gl128:
         r = self.registers
         if enabled:
             self._update_bits(r.REG_IR, set_bits=r.IR_LED)
-        else:
+        elif self._scan_method == "infrared":
             self._update_bits(r.REG_IR, clear_bits=r.IR_LED)
+        else:
+            # 0x37 reads back 0xB0 after the boot write of 0xC0; the vendor
+            # holds 0xC0 for all colour work rather than rewriting the readback.
+            self._write(r.REG_IR, int(self.model.init_regs.get(r.REG_IR, 0xC0)))
 
     def lamp_on(self) -> None:
         """Power the lamp for the selected method.

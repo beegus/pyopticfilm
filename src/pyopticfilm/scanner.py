@@ -11,6 +11,7 @@ from typing import Any, Literal, Self
 from pyopticfilm.advanced import AdvancedRegisters
 from pyopticfilm.asic.gl843_v1 import Gl843V1
 from pyopticfilm.asic.status import ScannerStatus
+from pyopticfilm.device.gl128_common import GL128_FIRMWARE_CURRENT, gl128_firmware_variant
 from pyopticfilm.device.model_7600i_v1 import Model7600iV1
 from pyopticfilm.device.protocol import ScanMethod
 from pyopticfilm.device.select import (
@@ -48,10 +49,20 @@ class Scanner:
     ) -> None:
         self._handle = handle
         self._protocol = protocol or GenesysUsbProtocol(handle)
-        self._model = model or model_for_device(
+        base_model = model or model_for_device(
             handle.info.product_id,
             getattr(handle.info, "bcd_device", 0),
         )
+        firmware = getattr(handle.info, "serial_number", None)
+        self._model = gl128_firmware_variant(base_model, firmware)
+        if self._model is not base_model:
+            logger.info(
+                "%s firmware %r is not %s: using the vendor's plain register set (0x36=0x%02X)",
+                self._model.name,
+                firmware,
+                GL128_FIRMWARE_CURRENT,
+                self._model.init_regs[0x36],
+            )
         self._asic = asic or create_asic(self._protocol, self._model)
         self._advanced = AdvancedRegisters(self._asic.usb if isinstance(self._asic, Gl843V1) else self._protocol)
         self._calibrator = Calibrator(
@@ -226,6 +237,7 @@ class Scanner:
         try:
             if getattr(self._model, "asic", "") == "GL128":
                 self.disarm_bringup_motor()
+                self._asic.enter_scan_clock()
             return self._calibrator.run(
                 resolution=resolution,
                 mode=mode,
@@ -277,6 +289,15 @@ class Scanner:
         validate_manual_exposure(me_short_exposure, label="me_short_exposure")
         validate_manual_exposure(me_long_exposure, label="me_long_exposure")
         validate_n_passes(n_passes)
+        if getattr(self._model, "asic", "") == "GL128":
+            from pyopticfilm.scan.session_gl128 import check_gl128_multi_pass
+
+            check_gl128_multi_pass(
+                self._model,
+                int(getattr(geometry, "resolution", None) or resolution),
+                multi_exposure=multi_exposure,
+                n_passes=n_passes,
+            )
         self._ensure_scan_ready()
         self._ensure_open()
         if not self._asic._initialized:

@@ -14,7 +14,7 @@ Adding a field to :class:`Gl128Common` without listing it in
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any
 
 from pyopticfilm.device.protocol import DEFAULT_GL845_MOTOR, MotorProfile
@@ -87,6 +87,7 @@ GPO_REGS: dict[int, int] = {
 #: Constant overrides the Windows driver applies on top of the boot map before
 #: every acquisition, at every resolution captured. Motor, lamp, depth and
 #: geometry registers are excluded here — the driver computes those per scan.
+#: 8200i SE / 8100 V2 values; the 8300i SE leaf overlays its own sensor timing.
 SCAN_REGS: dict[int, int] = {
     0x04: 0x42, 0x05: 0x40, 0x06: 0xF0, 0x0B: 0x4C,
     0x1C: 0x20, 0x1D: 0x80, 0x1E: 0x20,
@@ -268,6 +269,11 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "pixel_clock_by_dpi",
         "pixel_clock_long_by_dpi",
         "dummy_by_dpi",
+        "sensor_custom_regs",
+        "asic_clock_boot_0x8c",
+        "asic_clock_scan_0x8c",
+        "asic_boot_0x0b",
+        "native_image_exposure_factor",
     }
 )
 
@@ -336,7 +342,6 @@ GL128_SHARED_FIELDS: frozenset[str] = frozenset(
         "scan_window_end_steps",
         "motor_profile",
         "init_regs",
-        "sensor_custom_regs",
         "frontend_regs",
         "gpo_regs",
         "memory_layout_regs",
@@ -441,7 +446,6 @@ class Gl128Common:
     scan_window_end_steps: int = 27636
     motor_profile: MotorProfile = DEFAULT_GL845_MOTOR
     init_regs: Mapping[int, int] = field(default_factory=lambda: dict(INIT_REGS))
-    sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
     frontend_regs: Mapping[int, int] = field(default_factory=lambda: dict(FRONTEND_REGS))
     gpo_regs: Mapping[int, int] = field(default_factory=lambda: dict(GPO_REGS))
     memory_layout_regs: Mapping[int, int] = field(
@@ -458,6 +462,7 @@ class Gl128Common:
         max_image_lincnt_by_feed2: Mapping[int, int]
         ladder_feed2_steps: int
         ladder_lincnt_by_dpi: Mapping[int, int]
+        sensor_custom_regs: Mapping[int, int]
 
     @property
     def max_area_mm(self) -> tuple[float, float]:
@@ -470,6 +475,25 @@ class Gl128Common:
     def oversample_for(self, resolution: int) -> int:
         """Native lines the ASIC returns per *ASIC* output line."""
         return max(1, self.optical_resolution // self.asic_dpi_for(resolution))
+
+    def multi_pass_allowed_at(self, resolution: int) -> bool:
+        """Whether multi-exposure and Multi-Pass may run at ``resolution``.
+
+        Not at oversample 1 (native 7200 dpi): on the 8200i SE the ME long pass
+        (64000) drained at about 1 MB/s and the scanner dropped off USB part way
+        through the frame.
+        """
+        return self.oversample_for(resolution) != 1
+
+    @property
+    def multi_exposure_resolutions_dpi(self) -> tuple[int, ...]:
+        """Resolutions where ``scan(multi_exposure=True)`` is accepted."""
+        return tuple(dpi for dpi in self.resolutions_dpi if self.multi_pass_allowed_at(dpi))
+
+    @property
+    def multi_pass_resolutions_dpi(self) -> tuple[int, ...]:
+        """Resolutions where ``scan(n_passes > 1)`` is accepted."""
+        return tuple(dpi for dpi in self.resolutions_dpi if self.multi_pass_allowed_at(dpi))
 
     def line_period_for(self, resolution: int) -> int:
         """Value for ``LPERIOD`` (``0x28``) at ``resolution``."""
@@ -621,3 +645,28 @@ class Gl128Common:
         regs = dict(self.init_regs)
         regs.update(self.memory_layout_regs)
         return regs
+
+
+#: USB serial-number string (``iSerialNumber``) of current GL128 firmware. The
+#: vendor driver loads its ``VID_07b3&PID_xxxx-20241113`` register set for this
+#: string and the plain ``VID_07b3&PID_xxxx`` set for anything else; the two sets
+#: differ only in ``0x36``. :data:`INIT_REGS` is the ``-20241113`` set (every
+#: captured unit reports this string).
+GL128_FIRMWARE_CURRENT = "20241113"
+#: ``0x36`` from the plain register set.
+GL128_REG36_LEGACY_FIRMWARE = 0x04
+
+
+def gl128_firmware_variant(model: Any, firmware: str | None) -> Any:
+    """Return ``model`` with the vendor's per-firmware ``0x36`` for this unit.
+
+    ``firmware`` is the USB serial-number string. ``None`` (not readable) keeps
+    the model unchanged; non-GL128 models are always returned unchanged.
+    """
+    if not isinstance(model, Gl128Common) or firmware is None:
+        return model
+    if firmware.strip() == GL128_FIRMWARE_CURRENT:
+        return model
+    regs = dict(model.init_regs)
+    regs[0x36] = GL128_REG36_LEGACY_FIRMWARE
+    return replace(model, init_regs=regs)

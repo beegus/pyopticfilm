@@ -50,6 +50,7 @@ from pyopticfilm.device.gl128_common import (
     LPERIOD_BY_DPI,
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
+    SCAN_REGS,
     Gl128Common,
 )
 
@@ -117,6 +118,10 @@ class Model8200iSE(Gl128Common):
 
     exposure_lperiod: int = 14000
     exposure_short: int = 14000
+    #: 13_7200ppi_color: SilverFast uploads 28000 per channel with
+    #: ``REG_EXPOSURE`` 14000. At 14000 a full-width line outruns USB and the
+    #: motor stops and restarts every few seconds.
+    native_image_exposure_factor: int = 2
     pixel_clock_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(PIXEL_CLOCK_BY_DPI)
     )
@@ -124,6 +129,16 @@ class Model8200iSE(Gl128Common):
         default_factory=lambda: dict(PIXEL_CLOCK_LONG_BY_DPI)
     )
     dummy_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(DUMMY_BY_DPI))
+    sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
+    #: Clock written through ``0x8C`` to indices ``0x10`` and ``0x13``: once at
+    #: boot, then boot value followed by scan value before every scan pass.
+    #: ``0x0C`` for both in every SE capture (V2: ``0x0E``/``0x0C``,
+    #: 8300i SE: ``0x0E``/``0x0D``).
+    asic_clock_boot_0x8c: int = 0x0C
+    asic_clock_scan_0x8c: int = 0x0C
+    #: ``0x0B`` after the boot clock: DRAM enable is toggled off (``0x44``) and
+    #: on (``0x4C``). The top bits track the clock (V2 / 8300i SE: ``0x8C``).
+    asic_boot_0x0b: int = 0x4C
 
     def scaled_ld_shift(self, ld: int, asic_dpi: int) -> int:
         """Round line-distance shifts (floor left ~0.8 G / ~0.6 B at 1440)."""

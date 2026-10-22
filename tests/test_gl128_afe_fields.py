@@ -159,6 +159,32 @@ def test_search_afe_stays_inside_field_ranges(monkeypatch, name: str) -> None:
             assert not value & 0x100, (index, value)
 
 
+def test_ir_search_reads_every_strip_under_the_ir_led(monkeypatch) -> None:
+    """IR gains come from a wide IR strip (SF session 05 / 8300i), never from a dark strip."""
+    spec = SCENARIOS["infrared"]
+    fake = FakeAd9826(white=spec["white"], ir_white=spec["ir_white"])
+    asic = _make_asic(monkeypatch, fake)
+    lighting: list[tuple[bool, bool, int]] = []
+    acquire = asic.acquire_afe_strip.side_effect
+
+    def recording_acquire(size: int = 3072, **kw) -> bytes:
+        lighting.append((fake.lamp, fake.infrared, int(size)))
+        return acquire(size, **kw)
+
+    asic.acquire_afe_strip.side_effect = recording_acquire
+    result = asic.search_afe(method="infrared")
+
+    assert lighting and all(lamp and ir for lamp, ir, _size in lighting)
+    assert any(size == AFE_WIDE_BYTES for _lamp, _ir, size in lighting)
+    asic.lamp_off.assert_not_called()
+    fake.regs.update({0x02: 0, 0x03: 0, 0x04: 0, 0x05: 0x80, 0x06: 0x80, 0x07: 0x80})
+    fake.lamp, fake.infrared = True, True
+    wide = fake.strip(AFE_WIDE_BYTES)
+    assert result.gains == coarse_gains_from_wide_means(
+        channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False)
+    )
+
+
 def test_afe_strip_decode_is_chunky_even_when_lag_test_says_planar(monkeypatch) -> None:
     """The 8200i SE lag test picked planar on real strips; coarse gains must stay per channel."""
     monkeypatch.setattr(gl128_mod, "choose_usb_planar", lambda *_a, **_k: True, raising=False)

@@ -163,8 +163,8 @@ def test_me_long_manual_below_normal_limits_not_raised_to_adaptive_floor():
 
 
 def test_me_long_manual_skips_adaptive_clamp_and_reaches_register():
-    """ME long is normally capped at 64000; manual override reaches the true
-    16-bit AHB exposure table ceiling (65535) verbatim."""
+    """ME long is normally capped; manual override reaches the true 16-bit AHB
+    exposure table ceiling verbatim (131070 at 3600 dpi = table word 65535)."""
     session, usb = _mock_gl128_session_armed()
     captures: list[tuple[bool, bool, int]] = []
     original_configure = session._configure
@@ -176,35 +176,35 @@ def test_me_long_manual_skips_adaptive_clamp_and_reaches_register():
     session._configure = spy  # type: ignore[method-assign]
 
     session.run(
-        resolution=7200,
+        resolution=3600,
         area=_TINY,
         apply_calib=False,
         multi_exposure=True,
-        me_long_exposure=65535,
+        me_long_exposure=131070,
     )
 
     long_captures = [c for c in captures if c[0]]
     assert long_captures, "expected a long pass to run"
     _long_pass, manual, reg_value = long_captures[-1]
     assert manual is True
-    assert reg_value == 65535
-    assert session.last_me_debug.exposure_long == 65535
+    assert reg_value == 131070
+    assert session.last_me_debug.exposure_long == 131070
     assert session.last_me_debug.exposure_reason == "manual-override"
     assert session.last_me_debug.exposure_proposed is None
 
 
 def test_me_long_manual_above_16bit_table_raises():
-    """A manual override at oversample=1 (7200 dpi) above the AHB per-channel
-    exposure table's 16-bit width fails loudly instead of silently uploading a
-    wrapped table value inconsistent with REG_EXPOSURE."""
+    """A manual override whose AHB per-channel table word (exposure / oversample)
+    exceeds 16 bits fails loudly instead of silently uploading a wrapped table
+    value inconsistent with REG_EXPOSURE."""
     session, _usb = _mock_gl128_session_armed()
     with pytest.raises(ValueError, match="16-bit"):
         session.run(
-            resolution=7200,
+            resolution=3600,
             area=_TINY,
             apply_calib=False,
             multi_exposure=True,
-            me_long_exposure=150000,
+            me_long_exposure=140000,
         )
 
 

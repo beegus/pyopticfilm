@@ -46,8 +46,6 @@ class LabTarget:
     allow_unvalidated: bool = False
     #: Force planar USB RGB decode (``asic.usb_planar_rgb``) for rainbow bring-up.
     usb_planar: bool = False
-    #: Sleep between GL128 image bulk chunk announces (quieter creep; default on).
-    quiet_usb_pace: bool = True
     #: Upload slow motor slope for image configure (acoustic A/B).
     slow_image_slope: bool = False
 
@@ -70,15 +68,10 @@ def with_usb_planar(target: LabTarget, usb_planar: bool) -> LabTarget:
 def with_motor_acoustic(
     target: LabTarget,
     *,
-    quiet_usb_pace: bool = True,
     slow_image_slope: bool = False,
 ) -> LabTarget:
     """Copy ``target`` with GL128 motor-noise A/B toggles from the UI."""
-    return replace(
-        target,
-        quiet_usb_pace=bool(quiet_usb_pace),
-        slow_image_slope=bool(slow_image_slope),
-    )
+    return replace(target, slow_image_slope=bool(slow_image_slope))
 
 
 def apply_lab_hw_override(scanner: Scanner, target: LabTarget) -> None:
@@ -105,10 +98,16 @@ def apply_lab_motor_acoustic(scanner: Scanner, target: LabTarget) -> None:
     asic = getattr(scanner, "_asic", None)
     if asic is None:
         return
-    from pyopticfilm.scan.session_gl128 import IMAGE_USB_PACE_S
-
     asic.image_slope_slow = bool(target.slow_image_slope)
-    asic.image_usb_pace_s = IMAGE_USB_PACE_S if target.quiet_usb_pace else 0.0
+
+
+def multi_pass_allowed_at(model: FilmModel, dpi: int) -> bool:
+    """Whether the ME / Multi-Pass controls may be used at ``dpi`` (GL128 only)."""
+    if getattr(model, "asic", "") != "GL128":
+        return False
+    from pyopticfilm.scan.session_gl128 import gl128_multi_pass_allowed
+
+    return gl128_multi_pass_allowed(model, dpi)
 
 
 def nonse_safe_y_fraction(model: FilmModel) -> float:

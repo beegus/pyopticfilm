@@ -79,6 +79,7 @@ from pyopticfilm.device.gl128_common import (
     LPERIOD_BY_DPI,
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
+    SCAN_REGS,
     Gl128Common,
 )
 
@@ -180,6 +181,15 @@ class Model8100V2(Gl128Common):
         default_factory=lambda: dict(PIXEL_CLOCK_LONG_BY_DPI)
     )
     dummy_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(DUMMY_BY_DPI))
+    sensor_custom_regs: Mapping[int, int] = field(default_factory=lambda: dict(SCAN_REGS))
+    # 02_cold_boot_open / 03_prescan / 05_midtravel_home: 0x8C[0x10] = 0x8C[0x13]
+    # = 0x0E at boot, 0x0C before the scan session (SE: 0x0C for both).
+    asic_clock_boot_0x8c: int = 0x0E
+    asic_clock_scan_0x8c: int = 0x0C
+    # 03_prescan: 0x0B = 0x84, 0x13 = 0x0F, 0x0B = 0x8C after the boot clock.
+    asic_boot_0x0b: int = 0x8C
+    #: 04_color_7200: SilverFast uploads 28000 per channel with REG_EXPOSURE 14000.
+    native_image_exposure_factor: int = 2
 
     def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
         """Return ``(dummy, clk_a, clk_b)`` for a shading strip.

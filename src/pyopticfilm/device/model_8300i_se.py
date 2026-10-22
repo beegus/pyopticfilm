@@ -25,6 +25,10 @@ All divergent knobs below come from SilverFast 9 USBPcap full-frame captures
     Dark/white strip clocks differ from SE/V2; white @7200 dummy is ``0x26``
     (V2 ``0x10``, SE ``0x17``).  See :meth:`shading_strip_clocks`.
 
+**Sensor timing**
+    Per-scan overlay ``0x06``/``0x0B``/``0x52``–``0x57``/``0x5A``/``0x5B``/
+    ``0x70``–``0x73`` differs from SE/V2 ``SCAN_REGS`` (docs §10.7).
+
 **Slope ROM**
     CUSTOM AHB tables (heads ``0x32BB`` / ``0x846A``), not SE
     ``0x1FB4`` / ``0x16DE``.  See :mod:`pyopticfilm.device.tables_8300i_se`.
@@ -43,8 +47,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from pyopticfilm.device.gl128_common import LADDER_LINCNT_BY_DPI, Gl128Common
+from pyopticfilm.device.gl128_common import LADDER_LINCNT_BY_DPI, SCAN_REGS, Gl128Common
 from pyopticfilm.device.tables_8300i_se import SLOPE_TABLE_FAST, SLOPE_TABLE_SLOW
+
+# Per-scan sensor/AFE timing overlay. SilverFast writes these before every AFE,
+# shading and image acquire at every measured PPI, IR included (docs §10.7).
+# Under the SE/V2 values (``SCAN_REGS``) the colour white strip reads ~2x hotter
+# and rails on some units. ``0x36`` is a boot register chosen per firmware
+# (:func:`~pyopticfilm.device.gl128_common.gl128_firmware_variant`).
+_SCAN_REGS_8300I: dict[int, int] = {
+    **SCAN_REGS,
+    0x06: 0x10,
+    0x0B: 0x6C,
+    0x52: 0x08, 0x53: 0x0A, 0x54: 0x00, 0x55: 0x02, 0x56: 0x04, 0x57: 0x06,
+    0x5A: 0x22, 0x5B: 0x4A,
+    0x70: 0x06, 0x71: 0x07, 0x72: 0x07, 0x73: 0x08,
+}
 
 # Measured full-frame PPI: 150, 300, 600, 900, 1200, 1800, 2400, 3600, 7200.
 # Still filled (no capture): 720, 1440 — nearest-band fills are known-unreliable
@@ -217,6 +235,19 @@ class Model8300iSE(Gl128Common):
     dummy_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(_DUMMY_BY_DPI_8300I)
     )
+    sensor_custom_regs: Mapping[int, int] = field(
+        default_factory=lambda: dict(_SCAN_REGS_8300I)
+    )
+    # Every capture: 0x8C[0x10] = 0x8C[0x13] = 0x0E at boot, then 0x0E and 0x0D
+    # before each scan pass. Scanning at 0x0E runs the motor fast, rattles and
+    # stalls mid-pass; left unset, the clock keeps its power-on value.
+    asic_clock_boot_0x8c: int = 0x0E
+    asic_clock_scan_0x8c: int = 0x0D
+    # Plug-in capture: 0x0B = 0x84, 0x13 = 0x0F, 0x0B = 0x8C after the boot clock.
+    asic_boot_0x0b: int = 0x8C
+    #: 30000 per channel at 7200 dpi (REG_EXPOSURE 15000), the 8200i SE vendor
+    #: rule; not yet confirmed by an 8300i SE 7200 dpi capture.
+    native_image_exposure_factor: int = 2
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False

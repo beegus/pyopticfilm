@@ -16,13 +16,14 @@ stay in :class:`~pyopticfilm.scan.session.ScanSession`. What differs from GL845:
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 
-from pyopticfilm.asic.gl128 import DEFAULT_IMAGE_USB_PACE_S
 from pyopticfilm.asic.registers import Gl128Registers
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.protocol import AsicDriver, FilmModel, Gl128Model
@@ -42,16 +43,16 @@ logger = get_logger(__name__)
 #: and (empirically) high-PPI creep is quieter than one giant unpaced preamble.
 IMAGE_CHUNK_BYTES = BULK_MAX_SIZE
 
-#: Quiet-drain on sentinel (any ``> 0`` enables pacing). Not a sleep ceiling.
-#: Matches :data:`pyopticfilm.asic.gl128.DEFAULT_IMAGE_USB_PACE_S` (on by default).
-IMAGE_USB_PACE_S = DEFAULT_IMAGE_USB_PACE_S
+#: Environment variable naming a CSV that each image read appends per-chunk
+#: timing to (``dpi,offset,bytes,read_s,gap_s``).
+ACQUIRE_TIMING_ENV = "PYOPTICFILM_ACQUIRE_TIMING"
 
-#: Scale ASIC ``LPERIOD`` register to approximate output-line duration (seconds).
-_LINE_PERIOD_TO_SECONDS = 1.0 / 4_500_000.0
-
-#: Host stays slightly behind the ASIC line clock so the image buffer does not
-#: empty (start/stop creep). Applied only when quiet drain is on.
-_QUIET_DRAIN_LAG = 1.05
+#: Low bits of ``0x1D`` for an image pass, by ASIC dpi (8200i SE 13_ppi_ladder,
+#: 8100 V2 04_color_7200). SilverFast writes ``0x81`` before a 7200 dpi image;
+#: with ``0x80`` a full-width line outruns USB and the motor stops and restarts.
+_IMAGE_REG_1D_LOW_BY_DPI: dict[int, int] = {7200: 0x01}
+_REG_1D = 0x1D
+_REG_1D_LOW_MASK = 0x1F
 
 #: AHB per-channel exposure words are 16-bit. At oversample == 1 (native
 #: optical resolution, 7200 dpi) ``channel_exposure_for`` copies
@@ -76,6 +77,41 @@ def clamp_me_long(model: Gl128Model, resolution: int, exp_long: int) -> int:
     oversample = max(1, int(model.oversample_for(resolution)))
     hi = min(hi, _ME_CHANNEL_EXPOSURE_MAX * oversample)
     return min(max(int(exp_long), lo), hi)
+
+
+def native_line_floor(model: Gl128Model) -> int:
+    """Lowest per-channel table word for a driver-derived image pass at oversample 1.
+
+    Below ``exposure_short * native_image_exposure_factor`` (28000 on the
+    8200i SE / 8100 V2, 30000 on the 8300i SE) a full-width 7200 dpi line comes
+    out faster than USB drains it, and the motor stops and restarts.
+    """
+    factor = max(1, int(getattr(model, "native_image_exposure_factor", 1)))
+    return int(model.exposure_short) * factor
+
+
+def gl128_multi_pass_allowed(model: FilmModel, resolution: int) -> bool:
+    """Whether multi-exposure and Multi-Pass (``n_passes > 1``) may run at ``resolution``."""
+    allowed_at = getattr(model, "multi_pass_allowed_at", None)
+    if not callable(allowed_at):
+        return True
+    return bool(allowed_at(int(resolution)))
+
+
+def check_gl128_multi_pass(
+    model: FilmModel, resolution: int, *, multi_exposure: bool, n_passes: int
+) -> None:
+    """Raise :class:`ScanError` for multi-exposure / Multi-Pass where they are disabled."""
+    if not (multi_exposure or n_passes > 1):
+        return
+    if gl128_multi_pass_allowed(model, resolution):
+        return
+    mode = "multi_exposure=True" if multi_exposure else f"n_passes={n_passes}"
+    raise ScanError(
+        f"{mode} is not supported at {int(resolution)} dpi on {model.model}: "
+        "multi-exposure and Multi-Pass are disabled at native resolution. "
+        "Scan a single pass, or pick a lower resolution."
+    )
 
 
 try:
@@ -168,6 +204,11 @@ class Gl128ScanSession(ScanSession):
         validate_manual_exposure(me_short_exposure, label="me_short_exposure")
         validate_manual_exposure(me_long_exposure, label="me_long_exposure")
         validate_n_passes(n_passes)
+        geometry = kwargs.get("geometry")
+        resolution = getattr(geometry, "resolution", None) or kwargs.get("resolution", 1800)
+        check_gl128_multi_pass(
+            self.model, resolution, multi_exposure=multi_exposure, n_passes=n_passes
+        )
         if multi_exposure or n_passes > 1 or (infrared and kwargs.get("mode", "color") == "color"):
             if infrared and not getattr(self.model, "supports_infrared", False):
                 raise ScanError(
@@ -186,6 +227,7 @@ class Gl128ScanSession(ScanSession):
                 n_passes=n_passes,
                 **kwargs,
             )
+        self.asic.enter_scan_clock()
         if single_pass_exposure is None:
             # No override: identical to today's model-derived single pass.
             return super().run(*args, **kwargs)
@@ -253,6 +295,10 @@ class Gl128ScanSession(ScanSession):
         cache.pop(r.REG_0x03, None)
         cache.pop(r.REG_IR, None)
 
+        if not shading:
+            low = _IMAGE_REG_1D_LOW_BY_DPI.get(model.asic_dpi_for(dpi), 0)
+            cache[_REG_1D] = (cache.get(_REG_1D, 0x80) & ~_REG_1D_LOW_MASK) | low
+
         motor = r.MTRPWR
         if not shading:
             # Image pass: AGOHOME parks the carriage when the scan ends.
@@ -308,6 +354,13 @@ class Gl128ScanSession(ScanSession):
                 channel_exp = int(ch_exp_fn(dpi))
         else:
             channel_exp = None
+        if (
+            channel_exp is not None
+            and not shading
+            and not self._pass_manual
+            and model.oversample_for(dpi) == 1
+        ):
+            channel_exp = max(channel_exp, native_line_floor(model))
         # Validate before any motor move below: an out-of-range channel_exp
         # (e.g. a manual-override exposure above the 16-bit AHB table) must
         # raise here rather than after position_for_full_frame_scan already
@@ -485,6 +538,7 @@ class Gl128ScanSession(ScanSession):
                 if progress is not None:
                     progress(min(1.0, (_i + p) / n_pass))
 
+            self.asic.enter_scan_clock()
             calib = None
             if apply_calib and self.calibrator is not None:
                 if method == "transparency":
@@ -494,15 +548,7 @@ class Gl128ScanSession(ScanSession):
                     else:
                         calib = self.calibrator.ensure_colour_asic_shading(geometry)
                 else:
-                    calib = self.calibrator.find_for_scan(
-                        method=method, geometry=geometry
-                    )
-                    if calib is None:
-                        logger.warning(
-                            "No calib cache for method=%s dpi=%d — scanning uncalibrated.",
-                            method,
-                            geometry.resolution,
-                        )
+                    self.calibrator.measure_ir_host_flatten(geometry)
 
             logger.info(
                 "GL128 pass %s dpi=%d area=%s feed2=%d lincnt=%d str=%d end=%d %dx%d",
@@ -847,10 +893,6 @@ class Gl128ScanSession(ScanSession):
                 f"({expected_line}) at {geometry.resolution} dpi"
             )
 
-    def _line_interval_s(self, geometry: ScanGeometry) -> float:
-        lperiod = float(self.model.line_period_for(geometry.resolution))
-        return lperiod * _LINE_PERIOD_TO_SECONDS
-
     @staticmethod
     def _chunk_bytes(geometry: ScanGeometry, remaining: int) -> int:
         raw_line = getattr(geometry, "line_bytes", 0)
@@ -887,43 +929,94 @@ class Gl128ScanSession(ScanSession):
             else r.BULK_INDEX_IMAGE
         )
 
-        buf = bytearray()
-        pace_on = float(getattr(self.asic, "image_usb_pace_s", IMAGE_USB_PACE_S) or 0.0) > 0
-        line_interval = self._line_interval_s(geometry) if pace_on else 0.0
-        while len(buf) < total:
-            if cancel is not None and cancel.is_set():
-                raise ScanCancelled("cancelled during bulk read")
-            remaining = total - len(buf)
-            want = self._chunk_bytes(geometry, remaining)
-            t0 = time.monotonic()
-            proto.bulk_read_begin(want, index=index)
-            self._bulk_stream_active = True
-            try:
-                chunk = proto.bulk_read_exact(want)
-            finally:
-                self._bulk_stream_active = False
-            if not chunk:
-                raise ScanError(
-                    f"Bulk stream ended after {len(buf)} of {total} bytes"
-                )
-            buf.extend(chunk)
-            if progress is not None:
-                progress(min(1.0, len(buf) / total))
-            if pace_on and line_interval > 0:
+        # Filled in place: growing a bytearray to a 1.7 GB frame reallocates it
+        # repeatedly while the scanner keeps producing lines.
+        buf = bytearray(total)
+        view = memoryview(buf)
+        got = 0
+        timing: list[tuple[int, int, float, float]] = []
+        t_start = t_prev_end = time.perf_counter()
+        try:
+            while got < total:
+                if cancel is not None and cancel.is_set():
+                    raise ScanCancelled("cancelled during bulk read")
+                remaining = total - got
+                want = self._chunk_bytes(geometry, remaining)
+                p0 = time.perf_counter()
+                proto.bulk_read_begin(want, index=index)
+                self._bulk_stream_active = True
                 try:
-                    line_bytes = max(1, int(geometry.line_bytes))
-                except (TypeError, ValueError):
-                    line_bytes = IMAGE_CHUNK_BYTES
-                lines = max(1.0, len(chunk) / line_bytes)
-                expected = line_interval * lines * _QUIET_DRAIN_LAG
-                elapsed = time.monotonic() - t0
-                throttle = max(0.0, expected - elapsed)
-                if throttle > 0:
-                    time.sleep(throttle)
+                    chunk = proto.bulk_read_exact(want)
+                finally:
+                    self._bulk_stream_active = False
+                if not chunk:
+                    raise ScanError(f"Bulk stream ended after {got} of {total} bytes")
+                n = min(len(chunk), remaining)
+                view[got : got + n] = memoryview(chunk)[:n]
+                got += n
+                read_s = time.perf_counter() - p0
+                if progress is not None:
+                    progress(min(1.0, got / total))
+                timing.append((got - n, n, read_s, p0 - t_prev_end))
+                t_prev_end = time.perf_counter()
+        finally:
+            view.release()
+            self._report_acquire_timing(geometry, timing, time.perf_counter() - t_start)
 
         if progress is not None:
             progress(1.0)
-        return bytes(buf[:total])
+        return buf  # type: ignore[return-value]
+
+    #: A chunk read faster than this rate had its data waiting in the scanner
+    #: buffer, i.e. the host was behind the line clock.
+    _INSTANT_READ_BPS = 20_000_000.0
+    _INSTANT_READ_SLACK_S = 0.002
+
+    @classmethod
+    def _read_was_instant(cls, nbytes: int, seconds: float) -> bool:
+        return seconds <= nbytes / cls._INSTANT_READ_BPS + cls._INSTANT_READ_SLACK_S
+
+    @classmethod
+    def _report_acquire_timing(
+        cls,
+        geometry: ScanGeometry,
+        timing: list[tuple[int, int, float, float]],
+        wall_s: float,
+    ) -> None:
+        """Log one summary line per image read; optionally dump per-chunk CSV."""
+        if not timing:
+            return
+        nbytes = sum(t[1] for t in timing)
+        instant = sum(1 for t in timing if cls._read_was_instant(t[1], t[2]))
+        longest_read = max(t[2] for t in timing)
+        longest_gap = max(t[3] for t in timing)
+        logger.info(
+            "GL128 image read: %d dpi %.1f MB in %.1f s (%.2f MB/s) chunks=%d "
+            "instant_reads=%d longest_read=%.3f s longest_gap=%.3f s",
+            int(getattr(geometry, "resolution", 0) or 0),
+            nbytes / 1e6,
+            wall_s,
+            nbytes / 1e6 / wall_s if wall_s > 0 else 0.0,
+            len(timing),
+            instant,
+            longest_read,
+            longest_gap,
+        )
+        path = os.environ.get(ACQUIRE_TIMING_ENV)
+        if not path:
+            return
+        try:
+            out = Path(path)
+            new = not out.exists()
+            with out.open("a", encoding="utf-8") as fh:
+                if new:
+                    fh.write("dpi,offset,bytes,read_s,gap_s\n")
+                dpi = int(getattr(geometry, "resolution", 0) or 0)
+                for off, n, read_s, gap in timing:
+                    fh.write(f"{dpi},{off},{n},{read_s:.6f},{gap:.6f}\n")
+            logger.info("GL128 image read timing appended to %s", out)
+        except OSError as exc:
+            logger.warning("Could not write %s=%s: %s", ACQUIRE_TIMING_ENV, path, exc)
 
     def _end_scan(self) -> None:
         # Capture end/cancel recipe (lamp strobe + clear SCAN + AGOHOME park)
