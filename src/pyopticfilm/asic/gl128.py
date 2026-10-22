@@ -194,9 +194,9 @@ def _u16_table_bytes(words: tuple[int, ...]) -> bytes:
 
 
 #: Default adaptive quiet USB drain on GL128 image acquire (on/off sentinel).
-#: Any value ``> 0`` enables LPERIOD-matched pacing; ``0`` is flat-out drain
-#: (louder motor). Not a per-line sleep ceiling — ``_acquire`` sleeps the full
-#: line-period deficit (plus a small lag) when the host outran the ASIC.
+#: Any value ``> 0`` enables pacing; ``0`` is flat-out drain. Not a sleep
+#: length — ``_acquire`` sleeps one estimated line after a read that had to wait
+#: for the scanner, and never after a read the scanner buffer served at once.
 DEFAULT_IMAGE_USB_PACE_S = 0.003
 
 

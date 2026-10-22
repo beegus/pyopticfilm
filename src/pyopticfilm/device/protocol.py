@@ -145,6 +145,9 @@ class Gl128Model(FilmModel, Protocol):
     asic_clock_boot_0x8c: int
     asic_clock_scan_0x8c: int
     asic_boot_0x0b: int
+    #: Multiplier on the per-channel exposure table for a single-pass image at
+    #: native optical resolution (oversample 1). ``REG_EXPOSURE`` is unchanged.
+    native_image_exposure_factor: int
     ladder_feed2_steps: int
     ladder_lincnt_by_dpi: Mapping[int, int]
 

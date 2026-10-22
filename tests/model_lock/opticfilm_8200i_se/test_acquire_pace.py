@@ -11,7 +11,6 @@ import pytest
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.scan.geometry import compute_geometry
 from pyopticfilm.scan.session_gl128 import (
-    _QUIET_DRAIN_LAG,
     IMAGE_USB_PACE_S,
     Gl128ScanSession,
 )
@@ -28,8 +27,8 @@ def test_chunk_bytes_prefers_line_alignment():
     assert Gl128ScanSession._chunk_bytes(geometry, line + 10) == line
 
 
-def test_acquire_no_throttle_when_host_keeps_pace():
-    """Adaptive drain sleeps only when the host outruns the line period."""
+def test_acquire_no_sleep_after_instant_read():
+    """Data already waiting in the scanner buffer means the host is behind: never sleep."""
     geometry = _geometry()
     total = geometry.total_bytes
     session = Gl128ScanSession(MagicMock(), MODEL_8200I_SE)
@@ -50,8 +49,8 @@ def test_acquire_no_throttle_when_host_keeps_pace():
     def _sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    # Each chunk: t0 then elapsed well past one line period -> no throttle.
-    mono = iter([0.0, 10.0, 20.0, 30.0])
+    # Each chunk returns at once (t0 == end) -> host behind -> no sleep.
+    mono = iter([0.0, 0.0, 0.0, 0.0])
 
     with patch.object(Gl128ScanSession, "_wait_data"), patch(
         "pyopticfilm.scan.session_gl128.time.sleep", side_effect=_sleep
@@ -62,8 +61,8 @@ def test_acquire_no_throttle_when_host_keeps_pace():
     assert sleeps == []
 
 
-def test_acquire_throttle_matches_lperiod_at_7200():
-    """7200 LPERIOD is ~3.55 ms/line; do not cap sleep at the old 3 ms ceiling."""
+def test_acquire_sleeps_one_line_after_blocking_read_at_7200():
+    """A read that waited on the scanner sleeps one 7200 line (~3.55 ms), not more."""
     geometry = _geometry(dpi=7200)
     line = geometry.line_bytes
     chunk = Gl128ScanSession._chunk_bytes(geometry, geometry.total_bytes)
@@ -84,18 +83,16 @@ def test_acquire_throttle_matches_lperiod_at_7200():
     def _sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    mono = iter([0.0, 0.0])
+    mono = iter([0.0, 10.0])
 
     with patch.object(Gl128ScanSession, "_wait_data"), patch(
         "pyopticfilm.scan.session_gl128.time.sleep", side_effect=_sleep
     ), patch("pyopticfilm.scan.session_gl128.time.monotonic", side_effect=lambda: next(mono)):
         session._acquire(geom, progress=None, cancel=None)
 
-    chunk_lines = chunk / line
-    expected = session._line_interval_s(geometry) * chunk_lines * _QUIET_DRAIN_LAG
     assert len(sleeps) == 1
-    assert sleeps[0] == pytest.approx(expected)
-    assert sleeps[0] > IMAGE_USB_PACE_S * chunk_lines
+    assert sleeps[0] == pytest.approx(session._line_interval_s(geometry))
+    assert sleeps[0] > IMAGE_USB_PACE_S
 
 
 def test_gl128_default_adaptive_usb_drain():

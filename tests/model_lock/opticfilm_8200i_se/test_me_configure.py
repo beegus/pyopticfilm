@@ -196,9 +196,10 @@ def test_gl128_acquire_paces_between_chunks(monkeypatch):
 
     session = Gl128ScanSession(asic, MODEL_8200I_SE)
     session.se_regs = Gl128Registers()
-    mono = iter([0.0, 5.0, 5.0, 10.0])
+    # First read waits on the scanner (one-line sleep), second is served at once.
+    mono = iter([0.0, 5.0, 5.0, 5.0])
     with patch.object(Gl128ScanSession, "_wait_data"), patch(
         "pyopticfilm.scan.session_gl128.time.monotonic", side_effect=lambda: next(mono)
     ):
         session._acquire(geometry, progress=None, cancel=None)
-    assert sleeps == []
+    assert sleeps == [session._line_interval_s(geometry)]
