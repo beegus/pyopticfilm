@@ -3,8 +3,9 @@
 
 Enumerate connected scanners, pick one, choose PPI, optionally enable
 multi-exposure (ME) and infrared (IR) on scan-ready GL128 hardware
-(8200i SE; IR on SE only — 8100 V2 has no IR), and write 16-bit TIFF
-files to a folder.
+(ME on the 8200i SE, 8100 V2 and 8300i SE except at 7200 dpi; IR on the
+8200i SE and 8300i SE — 8100 V2 has no IR), and write 16-bit TIFF files
+to a folder.
 
 Requires WinUSB/libusb binding and ``pip install tifffile`` for TIFF output::
 
@@ -111,7 +112,10 @@ def main() -> int:
     multi_exposure = False
     infrared = False
     if model.asic == "GL128":
-        multi_exposure = _prompt_yes_no("Enable multi-exposure (ME)?")
+        if dpi in getattr(model, "multi_exposure_resolutions_dpi", ()):
+            multi_exposure = _prompt_yes_no("Enable multi-exposure (ME)?")
+        else:
+            print(f"Multi-exposure is not available at {dpi} dpi.")
         if getattr(model, "supports_infrared", False):
             infrared = _prompt_yes_no("Enable infrared dust plane (IR)?")
 

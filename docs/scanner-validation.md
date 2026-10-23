@@ -62,8 +62,11 @@ Helpers:
 ## GL128 multi-exposure long exposure limits
 
 Adaptive ME colour-long `REG_EXPOSURE` is clamped before the long pass runs
-(`clamp_me_long()` in `session_gl128.py`). 8200i SE and 8100 (V2) share the
-same envelope:
+(`clamp_me_long()` in `session_gl128.py`). 8200i SE, 8100 (V2) and 8300i SE
+share the same envelope (`Gl128Common` defaults). Since 1.3.7, `Scanner.scan`
+and `Gl128ScanSession.run` reject multi-exposure and Multi-Pass at 7200 dpi on
+all three, so the 7200 row is no longer reached by ME; it is kept for the clamp
+logic and the 16-bit note below:
 
 | PPI | Long clamp |
 | --- | --- |
@@ -82,7 +85,9 @@ unmasked — a value at or above 65536 would silently wrap there while
 `REG_EXPOSURE` (24-bit) does not, desyncing the two and jamming the motor on
 real hardware (observed; `exposure_table()` now raises instead of wrapping).
 
-The short bin is unchanged. Single-pass (non-ME) scans are not affected.
+The 16-bit limit still applies to manual exposure overrides on single-pass
+7200 dpi scans. The short bin is unchanged. Single-pass (non-ME) scans are not
+affected by the clamp.
 The adaptive selection floor stays `me_adaptive_min_exposure` (42000), which
 is separate from the hard floor of 14000. Stock `exposure_long` of 42000 is
 within range. Manual `me_long_exposure` still bypasses this clamp.

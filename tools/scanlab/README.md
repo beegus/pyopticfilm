@@ -246,7 +246,7 @@ with `python -m tools.register_reference` after editing the catalog.
 - Prescan / uncropped Scan use the capture-safe **preview** window (feed2 at
   the top of the TA window), not a raw full-TA `area=None` request that can
   overrun the motor window.
-- Rubber-band crops are clamped so image `LINCNT` cannot past the scan-window
+- Rubber-band crops are clamped so image `LINCNT` cannot run past the scan-window
   end (see `captures/8200i-se/MOTOR.md` in the repo if present).
 - High PPI (≥2400) uses line-aligned bulk drain, read as fast as USB allows.
   Each image pass prints a `GL128 image read:` timing line (MB/s, instant reads,
