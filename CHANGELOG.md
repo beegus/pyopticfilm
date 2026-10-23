@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-10-23
+
 ### Added
 
 - **GL128 AFE field probe** (`tools/probe_afe_fields.py`): stationary lab tool (carriage at home, motor off, calibration cache untouched) that sweeps FE indices (default `0x02` and `0x05`, any of `0x02`–`0x07` via `--fields`) with the lamp on and off and reports whether each behaves as a gain (AD9826 / 6-bit wrap at `0x40`) or an offset. `--layout planar|chunky` overrides the strip decode. Writes a CSV under `tools/scanlab/runs/afe-probe/`.

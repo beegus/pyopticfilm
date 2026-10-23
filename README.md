@@ -52,7 +52,7 @@ Not implemented or out of scope here: iSRD infrared dust removal, SilverFast-sty
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes. Latest release: [v1.3.6 on GitHub](https://github.com/jboneng/pyopticfilm/releases/tag/v1.3.6).
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Latest release: [v1.3.7 on GitHub](https://github.com/jboneng/pyopticfilm/releases/tag/v1.3.7).
 
 ## Requirements
 
@@ -116,7 +116,7 @@ For the 7600i v1, explicitly use 1440, 3600 or 7200 dpi for colour; IR supports 
 The shared `scan()` default of 1800 dpi is unsupported on this model. See the
 [7600i notes](docs/opticfilm-7600i-v1.md) for calibration and acquisition limits.
 
-Infrared scan (8200i SE):
+Infrared scan (8200i SE or 8300i SE):
 
 ```python
 with Scanner.open() as scanner:
@@ -125,9 +125,9 @@ with Scanner.open() as scanner:
 ```
 
 Multi-exposure (GL128 / hardware-tested models): short colour pass, then a
-**frame-adaptive** long pass. The long clamp is 14k–85k on both hardware-tested
-GL128 models, except 14k–64k at 7200 dpi where oversample is 1 and the AHB
-per-channel exposure table is 16-bit. Fallback 42000.
+**frame-adaptive** long pass. The long clamp is 14k–85k on all three
+hardware-tested GL128 models. Fallback 42000. Multi-exposure is not available
+at 7200 dpi (see **Resolution limits** below).
 The SNR/IVW-merged deliverable with film-base makeup is in ``rgb``. Bracket
 planes and fusion stats are on :attr:`~pyopticfilm.scanner.Scanner.last_me_debug`
 (Scan Lab / audit tooling only — not part of the NegPy-facing ``ScanImage``).
@@ -218,7 +218,7 @@ The three manual exposure overrides above are lab/debug-only —
 Scan Lab (`tools/scanlab/`) is the reference implementation exposing the full, unrestricted
 parameter set; NegPy is the reference implementation of the simplified 4-combination surface.
 
-Colour + IR in one call (8200i SE; IR after the colour / ME passes):
+Colour + IR in one call (8200i SE or 8300i SE; IR after the colour / ME passes):
 
 ```python
 image = scanner.scan(

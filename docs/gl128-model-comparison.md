@@ -78,7 +78,7 @@ Positioning slope **order** is not a divergence: both models upload
 | 1 | USB product ID | `0x181F` | neither (`1825` / `1824`) |
 | 2 | Infrared | yes (`0x37` → `0xB4` on IR pass) | SE |
 | 3 | Full-frame feed 2 | **PPI-dependent**, 13040…13128 (not SE 13560) | near V2 (13128) |
-| 4 | Image height (pyopticfilm `LINCNT`) | V2 ladder / full-frame table (`SF×4`) | V2 |
+| 4 | Image height (`LINCNT`) | SilverFast's value, one unit and one bulk row per output line (V2 table / 4, same travel) | neither (SE/V2 program 4 per line) |
 | 5 | Image-pass `LPERIOD` | **byte-identical to V2** at 300/1200/2400/3600/7200 | V2 |
 | 6 | Image / feed exposure | **15000** | neither (SE/V2 use 14000) |
 | 7 | Image-pass pixel clock `0xA5`/`0xAB` | different from SE/V2 (larger bytes; speed meaning unproven) | neither |
@@ -397,7 +397,7 @@ notes used here.
 |-----------|---------|----------|------|---------|
 | `strpixel_native_units` | yes | yes | unknown | inconclusive |
 | `optical_end_inactive_native` | 96 | 96 | unknown | inconclusive |
-| `image_lincnt_per_line` | 4 | 4 | unknown | inconclusive |
+| `image_lincnt_per_line` | 4 | 4 | unknown | inconclusive (8300i SE: 1, see §10.1) |
 | TA window X | 36.58 mm (offset 0.43 mm) | 36.58 mm (offset 0.43 mm) | unknown | inconclusive |
 | TA window Y | 25.59 mm | 25.59 mm | unknown (datasheet strip to 226 mm) | inconclusive |
 | Channel shift R / G / B | 0 / 24 / 48 | 0 / 24 / 48 | unknown | inconclusive |
@@ -452,7 +452,7 @@ either manual-feeder crop.
 
 | Address | Role | 8100 V2 | 8200i SE | 135i | Verdict |
 |---------|------|---------|----------|------|---------|
-| `0x10000000` | Channel R exposure / image window | yes | yes | yes | same |
+| `0x10000000` | Channel R exposure / image window (scan motor step periods; see note) | yes | yes | yes | same |
 | `0x10004000` | Channel G exposure | yes | yes | yes | same |
 | `0x10008000` | Channel B exposure | yes | yes | yes | same |
 | `0x1000C000` | Slope table (scan) | yes | yes | yes | same |
@@ -463,6 +463,14 @@ either manual-feeder crop.
 
 The six SE/V2 AHB windows are on 135i too. Panorama adds
 `0x10034000`, which does not appear on the manual feeders.
+
+**Channel windows (note):** the 256-word tables at `0x10000000` /
+`0x10004000` / `0x10008000` hold the scan motor's step periods, not an
+exposure in the sensor sense. SE and V2 upload a flat table (the period, first
+word +16). The 8300i SE uploads SilverFast's table: the period
+`REG_EXPOSURE × ((0x1D & 0x1F) + 1) × asic_dpi / 14400` (1875 at 1800 dpi,
+15000 at 7200), reached along the vendor acceleration ramp (head 40404, 4028,
+3016, …). See `Gl128Model.scan_motor_table` and §10.1.
 
 ---
 
@@ -558,10 +566,17 @@ Physical height at 7200: `7253 / 7200 × 25.4 ≈ 25.59 mm` (= shared
 `y_size_ta_mm`). The SE ladder is shorter by `128 × asic_dpi / 600` at every
 rung — the same gap that forced the V2 leaf’s own ladder table.
 
-**Leaf implication:** keep `image_lincnt_per_line=4` and
-`usb_image_lincnt_half_lines=True`; store **V2-scale** `LINCNT` (SF×4) in
-`ladder_lincnt_by_dpi` / `max_image_lincnt_by_feed2`. Do not program the raw
-SF `LINCNT` into the shared GL128 session.
+**Leaf implication (since 1.3.7):** the 8300i SE programs the SF `LINCNT`
+itself: `image_lincnt_per_line=1`, `usb_image_lincnt_half_lines=False`, and SF
+values in `ladder_lincnt_by_dpi` / `max_image_lincnt_by_feed2` (7253 at
+feed2 13128). This pairs with SilverFast's scan motor table at
+`0x10000000`/`0x10004000`/`0x10008000` (`Model8300iSE.scan_motor_table`),
+which steps the motor at twice the SE/V2 speed. Up to 1.3.6 the leaf stored
+the V2-scale SF×4 value with the 8200i SE's 4-per-line convention. That only
+covered the frame at the old half-speed table; with SilverFast's table the
+carriage travelled twice the frame height and hit the end of travel just past
+halfway ([#98](https://github.com/jboneng/pyopticfilm/issues/98)). The SF×4
+column above is kept as the old value and the V2 cross-check.
 
 ### 10.2 Colour short image-pass table
 
@@ -569,7 +584,7 @@ Values at the first (or short-ME) `wIndex=0x08` image preamble. Feed2 is the
 **settled** 24-bit FEEDL (complete `0x3D`/`0x3E`/`0x3F` trio) in 12000–14000
 before that preamble — not a mid-byte write.
 
-| PPI | feed2 (settled) | DPISET | SF `LINCNT` | py `LINCNT` (×4) | `LPERIOD` | vs SE | vs V2 | expo | `0xA5`/`0xAB` | SE `0xA5` | dummy `0x2B` | STR / END |
+| PPI | feed2 (settled) | DPISET | SF `LINCNT` | SF×4 (py ≤1.3.6) | `LPERIOD` | vs SE | vs V2 | expo | `0xA5`/`0xAB` | SE `0xA5` | dummy `0x2B` | STR / END |
 |-----|-----------------|--------|-------------|------------------|-----------|-------|-------|------|---------------|-----------|--------------|-----------|
 | 150 | **13040** | 100 | 605 | 2420 | 11067 | +3 | 0 | 15000 | `0x59` | `0x02` | `0x06` | 242 / 10610 |
 | 300 | **13040** | 100 | 605 | 2420 | 11067 | +3 | 0 | 15000 | `0x59` | `0x02` | `0x06` | 242 / 10610 |
