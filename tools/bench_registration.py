@@ -101,7 +101,7 @@ def bench_synthetic_translation() -> list[Row]:
     ]
     for name, side, (tdx, tdy) in cases:
         base = rng.integers(1000, 40000, (side, side, 3), dtype=np.uint16)
-        mov = warp_shift(base, tdx, tdy)
+        mov = warp_shift(base, -tdx, -tdy)
         t0 = time.perf_counter()
         dx, dy = estimate_pass_shift(base, mov)
         ms = _ms(t0)
@@ -129,7 +129,7 @@ def bench_synthetic_me_gain() -> list[Row]:
     ]:
         short = rng.integers(2000, 12000, (side, side, 3), dtype=np.uint16)
         long = np.clip(short.astype(np.float64) * gain, 0, 65535).astype(np.uint16)
-        long = warp_shift(long, tdx, tdy)
+        long = warp_shift(long, -tdx, -tdy)
         t0 = time.perf_counter()
         result = register(short, long, RegistrationMode.MULTI_EXPOSURE)
         ms = _ms(t0)
@@ -256,26 +256,23 @@ def _diag_refine_variants(
                 f"got=({dx:.3f},{dy:.3f})",
             )
         )
-    # Production path: small coarse → luma coarse re-lock; else multi-ROI refine.
+    # Production path: small coarse → luma seed + ROI refine; else ROI refine.
     from pyopticfilm.registration.preprocess import coarse_luma_registration_pair
 
     t0 = time.perf_counter()
+    seed = (cdx, cdy)
     if max(abs(cdx), abs(cdy)) <= opt.refine_max_residual + 0.5:
         luma_ref, luma_mov, luma_scale = coarse_luma_registration_pair(
             rgb, ir, target_w=opt.coarse_target_px
         )
-        dx, dy, _ = phase_correlate_shift(
+        ldx, ldy, _ = phase_correlate_shift(
             luma_ref, luma_mov, scale=luma_scale, upsample=1
         )
-        tag = "production (luma coarse)"
-    else:
-        dx, dy = _refine_translation(
-            rgb, ir, (cdx, cdy), mode, opt, second_pass=False
-        )
-        tag = "production (ROI refine)"
+        seed = (ldx, ldy)
+    dx, dy = _refine_translation(rgb, ir, seed, mode, opt, second_pass=False)
     rows.append(
         Row(
-            f"{label} {tag}",
+            f"{label} production (luma+ROI)",
             abs(dx),
             abs(dy),
             _ms(t0),
@@ -320,7 +317,8 @@ def bench_real_ir(
         )
 
         true = (5.0, -3.0) if dpi < 3600 else (12.0, -8.0)
-        mis = warp_shift(ir, true[0], true[1])
+        # Inverse remap so estimate recovers the apply shift ``true``.
+        mis = warp_shift(ir, -true[0], -true[1])
         t0 = time.perf_counter()
         result = register(rgb, mis, RegistrationMode.RGB_IR)
         ms = _ms(t0)
@@ -347,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
         "--real",
         type=Path,
         default=None,
-        help="Directory of RGB + *_IR.tif pairs (already OpenCV-aligned OK)",
+        help="Directory of RGB + *_IR.tif pairs (pre-aligned pairs OK for residual)",
     )
     parser.add_argument(
         "--skip-7200",

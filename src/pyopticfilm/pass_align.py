@@ -36,17 +36,13 @@ Shift2D = tuple[float, float]
 
 
 def native_align_available() -> bool:
-    """Return True — native NumPy registration is always available."""
-    return True
-
-
-def opencv_align_available() -> bool:
-    """Backward-compatible alias for :func:`native_align_available`."""
+    """Return True — NumPy registration is always available."""
     return True
 
 
 def warn_if_align_unavailable(context: str = "multi-pass") -> bool:
-    """Always available; kept for API compatibility. Returns True."""
+    """Always available; kept for call-site compatibility. Returns True."""
+    del context
     return True
 
 

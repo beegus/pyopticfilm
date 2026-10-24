@@ -323,8 +323,8 @@ def test_align_pass_subpixel_shift():
 
     rng = np.random.default_rng(1)
     base = rng.integers(1000, 20000, (96, 96, 3), dtype=np.uint16)
-    # Apply known shift to moving; estimate should recover it.
-    shifted, _ = align_pass_to_reference(base, base, shift=(3.0, -2.0))
+    # Apply inverse remap so estimate recovers the correction (+3,-2).
+    shifted, _ = align_pass_to_reference(base, base, shift=(-3.0, 2.0))
     dx, dy = estimate_pass_shift(base, shifted)
     assert abs(dx - 3.0) < 0.6
     assert abs(dy - (-2.0)) < 0.6
@@ -347,7 +347,7 @@ def test_align_pass_tall_crop_accepts_large_dy_within_height_guard():
     base = rng.integers(1000, 20000, (1340, 220, 3), dtype=np.uint16)
     # dy=20 clears the height guard (26.8) but would be rejected by a
     # width-only guard (16) — the bug this test guards against.
-    shifted, _ = align_pass_to_reference(base, base, shift=(0.0, 20.0))
+    shifted, _ = align_pass_to_reference(base, base, shift=(0.0, -20.0))
     _dx, dy = estimate_pass_shift(base, shifted)
     assert abs(dy - 20.0) < 1.0, f"real height-scale dy was rejected: got dy={dy}"
 

@@ -32,7 +32,8 @@ def test_hanning_window_shape_and_peak():
 def test_phase_correlate_shift_recovers_warp():
     rng = np.random.default_rng(1)
     base = rng.integers(1000, 20000, (96, 96), dtype=np.uint16)
-    mov = warp_shift(base, 3.0, -2.0)
+    # Create with inverse remap so estimate recovers the apply shift (+3,-2).
+    mov = warp_shift(base, -3.0, 2.0)
     dx, dy, resp = phase_correlate_shift(
         base.astype(np.float32), mov.astype(np.float32)
     )
@@ -44,3 +45,21 @@ def test_phase_correlate_shift_recovers_warp():
 def test_phase_correlate_rejects_empty():
     dx, dy, resp, _ = phase_correlate(np.zeros((0, 0)), np.zeros((0, 0)))
     assert (dx, dy, resp) == (0.0, 0.0, 0.0)
+
+
+def test_guizar_matches_centroid_sign_and_subpixel():
+    """Guizar upsample must agree with 5×5 centroid (same sign, ≤0.05 px)."""
+    rng = np.random.default_rng(21)
+    base = rng.standard_normal((96, 96)).astype(np.float32)
+    true = (1.35, -0.72)
+    mov = warp_shift(base, -true[0], -true[1]).astype(np.float32)
+    dx_c, dy_c, _ = phase_correlate_shift(base, mov, upsample=1)
+    dx_g, dy_g, _ = phase_correlate_shift(base, mov, upsample=16)
+    assert abs(dx_c - true[0]) < 0.35
+    assert abs(dy_c - true[1]) < 0.35
+    # Same sign and within a fraction of a pixel (centroid vs Guizar optima differ).
+    assert dx_g * dx_c > 0 and dy_g * dy_c > 0
+    assert abs(dx_g - dx_c) < 0.15, (dx_g, dx_c)
+    assert abs(dy_g - dy_c) < 0.15, (dy_g, dy_c)
+    assert abs(dx_g - true[0]) < 0.2
+    assert abs(dy_g - true[1]) < 0.2

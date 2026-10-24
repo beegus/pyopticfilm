@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Native NumPy pass registration** (`pyopticfilm.registration`): hierarchical windowed phase correlation with Guizar-Sicairos subpixel refinement on the refine ROI, mode-specific planes (Multi-Pass luminance, Multi-Exposure clip-aware, RGB↔IR gradient maps), integer-exact and separable bilinear/Keys-cubic resampling, and Multi-Pass row-banded Y profiles. ME short/long, Multi-Pass stacking, and IR→RGB alignment no longer require OpenCV. `tools/audit_me_bracket --align` defaults to the native engine and accepts `--engine={native,opencv,both}` for optional shadow comparison. `tools/bench_registration` reports accuracy, apply MP/s, and staged plane/coarse/refine timings.
+- **Native NumPy pass registration** (`pyopticfilm.registration`): hierarchical windowed phase correlation with Guizar-Sicairos subpixel refinement on the refine ROI, mode-specific planes (Multi-Pass luminance, Multi-Exposure clip-aware, RGB↔IR gradient maps), integer-exact and separable bilinear/Keys-cubic resampling, and Multi-Pass row-banded Y profiles. ME short/long, Multi-Pass stacking, and IR→RGB alignment use this engine only. `tools/audit_me_bracket --align` and `tools/bench_registration` report accuracy, apply MP/s, and staged timings.
 
 ### Changed
 
@@ -16,11 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **RGB↔IR Y residual vs OpenCV-aligned pairs**: coarse still locks with gradients for multimodal shifts; when that coarse shift is already small, a same-scale structural-luma re-estimate cancels downsample-amplified gradient bias. Larger shifts refine on integer-sliced luma ROIs with OpenCV-compatible 5×5 centroid (no fractional pre-warp, no Guizar; multi-ROI response-filtered median avoids a single bad vertical lobe).
+- **RGB↔IR Y residual on pre-aligned pairs**: coarse still locks with gradients for multimodal shifts; when that coarse shift is already small, a same-scale structural-luma re-estimate cancels downsample-amplified gradient bias, then full-res luma ROI refine runs (seed kept if refine jumps to a worse ~1–2 px cross-modal lobe). Larger shifts refine on integer-sliced luma ROIs (remap pre-shift, multi-ROI response-filtered median).
+- **Registration remap parity**: `warp_shift` / linear / cubic / integer match banded `warp_row_shifts` (`dst = src(x - dx, y - dy)`), so Translation `apply_transform` actually aligns. ROI integer pre-shift uses the same convention. Guizar subpixel refine matches 5×5 centroid sign (ME/MP); RGB↔IR refine stays phase-only centroid.
 
 ### Removed
 
-- **`opencv-python-headless`** from the `lab` dependency group. Pass registration is NumPy-only; OpenCV is optional only for audit comparison.
+- **OpenCV entirely**: `opencv-python-headless` is gone from dependency groups; `tools/audit_me_bracket --engine={opencv,both}` and `pass_align.opencv_align_available` are removed. Pass registration and audit tools are NumPy-only.
 
 ### Fixed
 

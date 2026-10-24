@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Windowed phase correlation (NumPy FFT; OpenCV-compatible convention)."""
+"""Windowed phase correlation (NumPy FFT; NegPy phase-correlate convention)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pyopticfilm.registration.dft import refine_peak_guizar
 
 
 def optimal_dft_size(n: int) -> int:
-    """Smallest ``2^a 3^b 5^c`` at least ``n`` (``cv2.getOptimalDFTSize``)."""
+    """Smallest ``2^a 3^b 5^c`` at least ``n`` (FFT-friendly pad length)."""
     n = max(1, int(n))
     m = n
     while True:
@@ -23,7 +23,7 @@ def optimal_dft_size(n: int) -> int:
 
 
 def hanning_window(h: int, w: int) -> np.ndarray:
-    """``cv2.createHanningWindow((w, h), CV_32F)`` — sqrt of separable Hann."""
+    """Sqrt of separable Hann window, shape ``(h, w)``, float32."""
     h = int(h)
     w = int(w)
     if h < 2 or w < 2:
@@ -40,7 +40,7 @@ def hanning_window(h: int, w: int) -> np.ndarray:
 def _fftshift_peak_coords(corr: np.ndarray) -> tuple[float, float, float, float]:
     """fftShift, 5×5 weighted centroid, return ``(dx, dy, response, peak_ratio)``.
 
-    Matches OpenCV/negpy_core: measure from the roll origin ``(n//2, m//2)``.
+    Measure from the roll origin ``(n//2, m//2)`` (NegPy phase-correlate).
     """
     m, n = corr.shape
     ym, xm = m // 2, n // 2
@@ -73,9 +73,9 @@ def phase_correlate(
     window: np.ndarray | None = None,
     upsample: int = 1,
 ) -> tuple[float, float, float, float]:
-    """``cv2.phaseCorrelate(a, b, window)`` → ``(dx, dy, response, peak_ratio)``.
+    """Phase correlate ``a`` vs ``b`` → ``(dx, dy, response, peak_ratio)``.
 
-    Returns the shift of ``b`` relative to ``a`` (OpenCV / NegPy convention).
+    Returns the shift of ``b`` relative to ``a`` (NegPy convention).
     Callers that pass ``(moving, reference)`` therefore get the warp shift to
     apply to ``moving`` to land on ``reference``.
     """
@@ -88,7 +88,7 @@ def phase_correlate(
         return 0.0, 0.0, 0.0, 0.0
     win = window if window is not None else hanning_window(h, w)
     m, n = optimal_dft_size(h), optimal_dft_size(w)
-    # Zero-pad after windowing (OpenCV pads the windowed arrays).
+    # Zero-pad after windowing.
     wa = np.zeros((m, n), dtype=np.float32)
     wb = np.zeros((m, n), dtype=np.float32)
     wa[:h, :w] = a * win
@@ -100,8 +100,7 @@ def phase_correlate(
     mag = np.abs(cross)
     eps = np.finfo(np.float32).eps * max(float(mag.max()), 1.0)
     cross = np.divide(cross, mag, out=np.zeros_like(cross), where=mag > eps)
-    # OpenCV idft is unnormalized; NumPy default divides by n — use forward
-    # norm so the inverse is unscaled and the 5×5 response matches cv2.
+    # Unnormalized inverse (norm="forward") so the 5×5 response scale is stable.
     corr = np.fft.irfft2(cross, s=(m, n), norm="forward")
     dx, dy, response, peak_ratio = _fftshift_peak_coords(corr)
 
@@ -113,9 +112,12 @@ def phase_correlate(
         # Ordinary cross-spectrum for Guizar (small ROI — float64 OK).
         fa2 = np.fft.fft2(wa.astype(np.float64))
         fb2 = np.fft.fft2(wb.astype(np.float64))
+        # Peak of ifft(Fa*conj(Fb)) is shift of b relative to a; Guizar's
+        # matrix-multiply DFT returns the opposite sign of the 5×5 centroid —
+        # negate to match ``_fftshift_peak_coords``.
         cross_full = fa2 * np.conj(fb2)
         rdx, rdy = refine_peak_guizar(cross_full, iy, ix, upsample_factor=upsample)
-        dx, dy = float(rdx), float(rdy)
+        dx, dy = -float(rdx), -float(rdy)
 
     return dx, dy, response, peak_ratio
 

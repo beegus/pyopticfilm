@@ -126,7 +126,7 @@ class RegistrationOptions:
     refine_roi_side: int = 512
     subpixel_factor: int = 16
     max_candidates: int = 5
-    #: Slightly below OpenCV's typical floor so float32 coarse peaks still pass.
+    #: Floor for accepting a phase-correlation peak (float32 coarse).
     min_response: float = 0.03
     sanity_max_frac: float = 0.5
     refine_max_residual: float = 2.0

@@ -177,7 +177,7 @@ def coarse_luma_registration_pair(
     """Block-mean structural luma pair at the same scale as RGB↔IR coarse.
 
     Used to cancel gradient-coarse bias when the shift is already small
-    (OpenCV-aligned residual / fine lock). Gradients stay on the primary coarse
+    (near-aligned residual / fine lock). Gradients stay on the primary coarse
     stage for multimodal lock on large shifts.
     """
     from pyopticfilm.registration.pyramid import block_mean
@@ -217,9 +217,9 @@ def roi_registration_plane(
 ) -> np.ndarray:
     """Plane for a small refine ROI.
 
-    RGB↔IR refine uses structural luma / IR intensity (OpenCV-compatible), while
-    the coarse stage keeps gradients for multimodal lock. Pass ``force`` as
-    ``"luma"`` or ``"gradient"`` for diagnostics.
+    RGB↔IR refine uses structural luma / IR intensity, while the coarse stage
+    keeps gradients for multimodal lock. Pass ``force`` as ``"luma"`` or
+    ``"gradient"`` for diagnostics.
     """
     if force == "gradient":
         if tile.ndim == 3:

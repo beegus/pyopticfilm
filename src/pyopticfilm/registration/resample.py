@@ -41,7 +41,12 @@ def translation_overlap(h: int, w: int, dx: int, dy: int) -> Overlap | None:
 
 
 def fill_shift_border(out: np.ndarray, dx: float, dy: float) -> np.ndarray:
-    """Replace OOB strips with nearest interior column/row (IR-safe)."""
+    """Replace OOB strips with deeper interior (IR-safe; no edge-column widen).
+
+    Remap with ``+dx`` exposes the left strip; the first valid column often
+    still sampled the extreme source edge (hot IR padding). Copy from
+    ``~2*|dx|`` when available so that edge is not painted into the strip.
+    """
     h, w = out.shape[:2]
     bx = int(np.ceil(abs(float(dx))))
     by = int(np.ceil(abs(float(dy))))
@@ -50,14 +55,18 @@ def fill_shift_border(out: np.ndarray, dx: float, dy: float) -> np.ndarray:
     result = np.array(out, copy=True)
     if bx > 0 and bx < w:
         if dx > 0:
-            result[:, :bx] = result[:, bx : bx + 1]
+            src_c = min(w - 1, 2 * bx)
+            result[:, :bx] = result[:, src_c : src_c + 1]
         elif dx < 0:
-            result[:, w - bx :] = result[:, w - bx - 1 : w - bx]
+            src_c = max(0, w - 1 - 2 * bx)
+            result[:, w - bx :] = result[:, src_c : src_c + 1]
     if by > 0 and by < h:
         if dy > 0:
-            result[:by] = result[by : by + 1]
+            src_r = min(h - 1, 2 * by)
+            result[:by] = result[src_r : src_r + 1]
         elif dy < 0:
-            result[h - by :] = result[h - by - 1 : h - by]
+            src_r = max(0, h - 1 - 2 * by)
+            result[h - by :] = result[src_r : src_r + 1]
     return result
 
 
@@ -68,9 +77,11 @@ def fill_row_shift_border(out: np.ndarray, dx: float, dy_per_row: np.ndarray) ->
     bx = int(np.ceil(abs(float(dx))))
     if 0 < bx < w:
         if dx > 0:
-            result[:, :bx] = result[:, bx : bx + 1]
+            src_c = min(w - 1, 2 * bx)
+            result[:, :bx] = result[:, src_c : src_c + 1]
         else:
-            result[:, w - bx :] = result[:, w - bx - 1 : w - bx]
+            src_c = max(0, w - 1 - 2 * bx)
+            result[:, w - bx :] = result[:, src_c : src_c + 1]
     src_y = np.arange(h, dtype=np.float64) - dy_per_row
     valid_rows = np.flatnonzero((src_y >= 0) & (src_y <= h - 1))
     if valid_rows.size and valid_rows.size < h:
@@ -83,16 +94,15 @@ def fill_row_shift_border(out: np.ndarray, dx: float, dy_per_row: np.ndarray) ->
 
 
 def warp_integer(mov: np.ndarray, dx: int, dy: int) -> np.ndarray:
-    """Index-gather translate; exact within overlap; border filled from interior."""
+    """Integer remap translate: ``out[y, x] = src[y - dy, x - dx]``.
+
+    Matches ``warp_row_shifts`` / phase-correlate apply: positive ``(dx, dy)``
+    moves content right/down. OOB samples are zeroed then IR-safe border-filled.
+    """
     if dx == 0 and dy == 0:
         return mov
-    h, w = mov.shape[:2]
-    x_idx = np.clip(np.arange(w) + dx, 0, w - 1)
-    y_idx = np.clip(np.arange(h) + dy, 0, h - 1)
-    if mov.ndim == 3:
-        out = mov[y_idx][:, x_idx, :]
-    else:
-        out = mov[y_idx][:, x_idx]
+    # Remap via gather at (-dx, -dy); zeros for OOB (not edge-clamp).
+    out = _affine_ishift_slices(np.asarray(mov), -int(dx), -int(dy))
     return fill_shift_border(out, float(dx), float(dy))
 
 
@@ -164,7 +174,7 @@ def _finalize_warp(out: np.ndarray, dtype: np.dtype, dx: float, dy: float) -> np
 
 
 def warp_cubic(mov: np.ndarray, dx: float, dy: float) -> np.ndarray:
-    """Separable Keys cubic translation."""
+    """Separable Keys cubic remap: ``out = src(x - dx, y - dy)``."""
     if abs(dx) < 1e-9 and abs(dy) < 1e-9:
         return mov
     if abs(dx - round(dx)) < 1e-6 and abs(dy - round(dy)) < 1e-6:
@@ -172,10 +182,12 @@ def warp_cubic(mov: np.ndarray, dx: float, dy: float) -> np.ndarray:
 
     arr = np.asarray(mov)
     dtype = arr.dtype
+    # Separable helper uses dst[i]=src[i+s]; remap needs s = -dx / -dy.
+    sx, sy = -float(dx), -float(dy)
 
     def warp_plane(p: np.ndarray) -> np.ndarray:
-        tmp = _sample_1d_cubic(p, axis=1, shift=dx) if abs(dx) >= 1e-12 else p.astype(np.float32)
-        return _sample_1d_cubic(tmp, axis=0, shift=dy) if abs(dy) >= 1e-12 else tmp
+        tmp = _sample_1d_cubic(p, axis=1, shift=sx) if abs(sx) >= 1e-12 else p.astype(np.float32)
+        return _sample_1d_cubic(tmp, axis=0, shift=sy) if abs(sy) >= 1e-12 else tmp
 
     if arr.ndim == 3:
         out = np.stack([warp_plane(arr[:, :, c]) for c in range(arr.shape[2])], axis=2)
@@ -185,7 +197,7 @@ def warp_cubic(mov: np.ndarray, dx: float, dy: float) -> np.ndarray:
 
 
 def _affine_ishift_slices(arr: np.ndarray, sx: int, sy: int) -> np.ndarray:
-    """``out[y, x] = arr[y + sy, x + sx]`` on the in-bounds overlap (zeros elsewhere)."""
+    """Gather helper: ``out[y, x] = arr[y + sy, x + sx]`` on in-bounds overlap."""
     h, w = arr.shape[:2]
     out = np.zeros_like(arr)
     y0 = max(0, -sy)
@@ -204,9 +216,10 @@ def warp_linear(
     *,
     chunk_rows: int = 512,
 ) -> np.ndarray:
-    """Bilinear translate via slice copies + scalar weights (no mgrid / fancy index).
+    """Bilinear remap: ``out[y, x] = src[y - dy, x - dx]``.
 
-    ``chunk_rows`` is accepted for API compatibility and unused.
+    Implemented via gather slices with negated offsets. ``chunk_rows`` is
+    accepted for API compatibility and unused.
     """
     del chunk_rows
     if not np.isfinite(dx) or not np.isfinite(dy):
@@ -218,10 +231,12 @@ def warp_linear(
 
     arr = np.asarray(mov)
     dtype = arr.dtype
-    ix = int(np.floor(dx))
-    iy = int(np.floor(dy))
-    fx = float(dx - ix)
-    fy = float(dy - iy)
+    # Remap (dx, dy) ⇒ gather at (-dx, -dy); bilinear in gather space.
+    gx, gy = -float(dx), -float(dy)
+    ix = int(np.floor(gx))
+    iy = int(np.floor(gy))
+    fx = float(gx - ix)
+    fy = float(gy - iy)
 
     c00 = _affine_ishift_slices(arr, ix, iy)
     if abs(fx) < 1e-6 and abs(fy) < 1e-6:
@@ -254,7 +269,7 @@ def warp_shift(
     method: str = "linear",
     chunk_rows: int = 512,
 ) -> np.ndarray:
-    """Translate ``mov`` by ``(dx, dy)`` — linear (OpenCV-like) or cubic."""
+    """Remap-translate ``mov`` by ``(dx, dy)`` — linear or cubic."""
     if method == "cubic":
         return warp_cubic(mov, dx, dy)
     return warp_linear(mov, dx, dy, chunk_rows=chunk_rows)
@@ -270,7 +285,7 @@ def warp_row_shifts(
 ) -> np.ndarray:
     """Per-row dy + constant dx without HxW map arrays (remap convention).
 
-    Matches legacy OpenCV ``remap(x - dx, y - dy[y])`` used by banded Multi-Pass.
+    Remap convention ``dst(x,y) = src(x - dx, y - dy[y])`` for banded Multi-Pass.
     """
     arr = np.asarray(mov)
     h, _w = arr.shape[:2]
@@ -327,9 +342,9 @@ def warp_row_shifts(
 
 
 def valid_mask_translation(h: int, w: int, dx: float, dy: float) -> np.ndarray:
-    """Boolean mask of pixels that sample inside the moving image."""
+    """Boolean mask of pixels that sample inside the moving image (remap)."""
     yy = np.arange(h, dtype=np.float64)[:, None]
     xx = np.arange(w, dtype=np.float64)[None, :]
-    sx = xx + dx
-    sy = yy + dy
+    sx = xx - dx
+    sy = yy - dy
     return (sx >= 0) & (sx <= w - 1) & (sy >= 0) & (sy <= h - 1)

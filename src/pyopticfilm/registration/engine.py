@@ -103,7 +103,10 @@ def estimate_translation(
 
     # ROI refine via integer-slice pre-shift — never full-frame warp.
     # RGB↔IR: when gradient coarse is already small, re-lock on coarse luma
-    # (cancels downsample-amplified gradient bias vs OpenCV-aligned pairs).
+    # (cancels downsample-amplified gradient bias), then full-res refine.
+    # Keep the luma seed if refine jumps to a worse ~1–2 px cross-modal lobe.
+    seed_dx, seed_dy = float(dx), float(dy)
+    used_luma_seed = False
     if (
         mode is RegistrationMode.RGB_IR
         and max(abs(dx), abs(dy)) <= opt.refine_max_residual + 0.5
@@ -122,11 +125,14 @@ def estimate_translation(
                 ldx, ldy, full_w, full_h, max_frac=opt.sanity_max_frac
             )
         ):
-            dx, dy = float(ldx), float(ldy)
-        else:
-            dx, dy = _refine_translation(ref, mov, (dx, dy), mode, opt)
-    else:
-        dx, dy = _refine_translation(ref, mov, (dx, dy), mode, opt)
+            seed_dx, seed_dy = float(ldx), float(ldy)
+            used_luma_seed = True
+    dx, dy = _refine_translation(ref, mov, (seed_dx, seed_dy), mode, opt)
+    if used_luma_seed:
+        seed_mag = max(abs(seed_dx), abs(seed_dy))
+        ref_mag = max(abs(dx), abs(dy))
+        if ref_mag > seed_mag + 0.25:
+            dx, dy = seed_dx, seed_dy
 
     if shift_is_pathological(dx, dy, full_w, full_h, max_frac=opt.sanity_max_frac):
         return _zero_result(
@@ -236,10 +242,14 @@ def _roi_residual(
     plane_force: str | None,
     upsample: int,
 ) -> tuple[float, float, float] | None:
-    """Phase-correlate one integer-presifted ROI; ``None`` if out of bounds."""
+    """Phase-correlate one integer-presifted ROI; ``None`` if out of bounds.
+
+    Remap convention: sample moving at ``(y0 - idy, x0 - idx)`` so the ROI
+    residual is the true fractional part (not ~2× the shift).
+    """
     h, w = reference.shape[:2]
-    my0 = y0 + idy
-    mx0 = x0 + idx
+    my0 = y0 - idy
+    mx0 = x0 - idx
     ty0, tx0 = y0, x0
     if my0 < 0:
         ty0 -= my0
@@ -280,9 +290,9 @@ def _refine_translation(
     the ROI phase correlate absorbs the full residual, and the result is
     ``(round(dx0) + ddx, round(dy0) + ddy)``.
 
-    RGB↔IR uses luma + OpenCV 5×5 centroid (no Guizar), with a small multi-ROI
-    median over response-filtered tiles to avoid a single bad vertical lobe.
-    Guizar remains available for ME when ``enable_guizar_refine`` is set.
+    RGB↔IR uses luma + 5×5 centroid (no Guizar — ordinary-spectrum Guizar
+    disagrees on cross-modal peaks); multi-ROI median avoids a bad vertical
+    lobe. Guizar remains available for ME/MP when enabled.
     """
     h, w = reference.shape[:2]
     if h * w < 512 * 512:
@@ -293,7 +303,7 @@ def _refine_translation(
     idx = int(round(dx0))
     idy = int(round(dy0))
 
-    # RGB↔IR: OpenCV-compatible centroid only. ME/MP may use Guizar on small ROIs.
+    # Guizar on ME/MP only: RGB↔IR cross-modal peaks favor phase-only centroid.
     guizar_ok = (
         opt.enable_subpixel
         and opt.enable_guizar_refine
@@ -359,10 +369,10 @@ def _refine_translation(
     dx = float(idx) + ddx
     dy = float(idy) + ddy
 
-    # Optional second pass (off by default — fractional pre-warp pulls cross-modal Y).
+    # Optional second pass (off by default for RGB↔IR cross-modal stability).
     if second_pass and opt.enable_subpixel:
         y0, x0 = cy, cx
-        my0, mx0 = y0 + idy, x0 + idx
+        my0, mx0 = y0 - idy, x0 - idx
         if my0 < 0:
             y0 -= my0
             my0 = 0
@@ -373,9 +383,9 @@ def _refine_translation(
         tw = min(rw, w - x0, w - mx0)
         if th >= 64 and tw >= 64:
             mov_tile = moving[my0 : my0 + th, mx0 : mx0 + tw]
-            # Negate residual: phase shift is the warp that created the offset.
+            # Remap-apply the residual so the tile is near-aligned for remeasure.
             mov_aligned = warp_shift(
-                mov_tile, -ddx, -ddy, method="linear", chunk_rows=th
+                mov_tile, ddx, ddy, method="linear", chunk_rows=th
             )
             ref_roi = roi_registration_plane(
                 reference[y0 : y0 + th, x0 : x0 + tw], mode, force=plane_force

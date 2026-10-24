@@ -19,7 +19,8 @@ def test_rgb_ir_recovers_fractional_y_shift():
     ir = np.clip(np.sqrt(luma / 65535.0) * 65535.0, 0, 65535).astype(np.uint16)
 
     true_dx, true_dy = 2.35, -1.40
-    mis = warp_shift(ir, true_dx, true_dy)
+    # Inverse remap so estimate recovers the apply shift.
+    mis = warp_shift(ir, -true_dx, -true_dy)
     result = register(rgb, mis, RegistrationMode.RGB_IR)
     assert result.accepted
     dx, dy = result.shift
