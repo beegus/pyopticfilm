@@ -33,6 +33,37 @@ from pyopticfilm.registration.validate import classify_failure, should_snap_to_i
 
 logger = get_logger(__name__)
 
+# When gradient and luma coarse disagree by more than this (px), prefer the
+# smaller-|shift| axis value — the larger one is usually a cross-modal lobe.
+_RGB_IR_SEED_AGREE_PX = 0.5
+_RGB_IR_REFINE_KEEP_SEED_PX = 0.25
+
+
+def _rgb_ir_merge_seed_axes(
+    grad_dx: float, grad_dy: float, luma_dx: float, luma_dy: float
+) -> tuple[float, float]:
+    """Per-axis merge of gradient coarse and luma coarse for RGB↔IR."""
+
+    def one(g: float, l: float) -> float:
+        if abs(l - g) <= _RGB_IR_SEED_AGREE_PX:
+            return l
+        return g if abs(g) <= abs(l) else l
+
+    return one(grad_dx, luma_dx), one(grad_dy, luma_dy)
+
+
+def _rgb_ir_keep_seed_axes(
+    seed_dx: float, seed_dy: float, ref_dx: float, ref_dy: float
+) -> tuple[float, float]:
+    """Keep seed on an axis if refine jumped farther from zero by > margin."""
+
+    def one(s: float, r: float) -> float:
+        if abs(r) > abs(s) + _RGB_IR_REFINE_KEEP_SEED_PX:
+            return s
+        return r
+
+    return one(seed_dx, ref_dx), one(seed_dy, ref_dy)
+
 
 def _zero_result(
     mode: RegistrationMode,
@@ -102,11 +133,10 @@ def estimate_translation(
         )
 
     # ROI refine via integer-slice pre-shift — never full-frame warp.
-    # RGB↔IR: when gradient coarse is already small, re-lock on coarse luma
-    # (cancels downsample-amplified gradient bias), then full-res refine.
-    # Keep the luma seed if refine jumps to a worse ~1–2 px cross-modal lobe.
+    # RGB↔IR: when gradient coarse is already small, merge coarse-luma per axis
+    # (agree → luma; disagree → smaller |shift| to avoid a 1–2 px cross-modal lobe).
     seed_dx, seed_dy = float(dx), float(dy)
-    used_luma_seed = False
+    used_rgb_ir_seed = False
     if (
         mode is RegistrationMode.RGB_IR
         and max(abs(dx), abs(dy)) <= opt.refine_max_residual + 0.5
@@ -125,14 +155,18 @@ def estimate_translation(
                 ldx, ldy, full_w, full_h, max_frac=opt.sanity_max_frac
             )
         ):
-            seed_dx, seed_dy = float(ldx), float(ldy)
-            used_luma_seed = True
+            seed_dx, seed_dy = _rgb_ir_merge_seed_axes(
+                seed_dx, seed_dy, float(ldx), float(ldy)
+            )
+            used_rgb_ir_seed = True
     dx, dy = _refine_translation(ref, mov, (seed_dx, seed_dy), mode, opt)
-    if used_luma_seed:
-        seed_mag = max(abs(seed_dx), abs(seed_dy))
-        ref_mag = max(abs(dx), abs(dy))
-        if ref_mag > seed_mag + 0.25:
+    if used_rgb_ir_seed:
+        # Multi-ROI refine often hops to a competing ~1 px lobe; only keep it
+        # as a small polish around the merged coarse seed.
+        if abs(dx - seed_dx) > 0.25 or abs(dy - seed_dy) > 0.25:
             dx, dy = seed_dx, seed_dy
+        else:
+            dx, dy = _rgb_ir_keep_seed_axes(seed_dx, seed_dy, dx, dy)
 
     if shift_is_pathological(dx, dy, full_w, full_h, max_frac=opt.sanity_max_frac):
         return _zero_result(
@@ -186,9 +220,13 @@ def estimate_translation(
                 mode, reason="outside prior dy", failure=RegistrationFailure.OUTSIDE_SCANNER_PRIOR
             )
 
-    integer_exact = should_snap_to_integer(dx, dy, eps=opt.snap_frac_eps)
-    if integer_exact:
-        dx, dy = float(round(dx)), float(round(dy))
+    # RGB↔IR: never integer-snap — cross-modal peaks often sit ~0.5–1 px off an
+    # integer and snapping pulls X/Y onto the wrong lobe (e.g. −1.5 → −2).
+    integer_exact = False
+    if mode is not RegistrationMode.RGB_IR:
+        integer_exact = should_snap_to_integer(dx, dy, eps=opt.snap_frac_eps)
+        if integer_exact:
+            dx, dy = float(round(dx)), float(round(dy))
 
     failure = classify_failure(
         response=resp,
@@ -316,7 +354,7 @@ def _refine_translation(
 
     cy = max(0, (h - rh) // 2)
     cx = max(0, (w - rw) // 2)
-    # Multi-ROI for RGB↔IR luma (single center ROI is enough for ME/MP).
+    # Multi-ROI for RGB↔IR luma (cardinals + diagonals); ME/MP: center only.
     if mode is RegistrationMode.RGB_IR and plane_force in (None, "luma"):
         half_y = rh // 2
         half_x = rw // 2
@@ -326,6 +364,10 @@ def _refine_translation(
             (cy + half_y, cx),
             (cy, cx - half_x),
             (cy, cx + half_x),
+            (cy - half_y, cx - half_x),
+            (cy - half_y, cx + half_x),
+            (cy + half_y, cx - half_x),
+            (cy + half_y, cx + half_x),
         )
     else:
         origins = ((cy, cx),)
@@ -360,11 +402,20 @@ def _refine_translation(
     if len(samples) == 1:
         ddx, ddy, _ = samples[0]
     else:
-        # Keep ROIs at/above median response, then median the residuals.
+        # High-response tiles, then prefer those near the coarse seed (rejects
+        # a competing ~1 px X/Y lobe that still has decent response).
         resp_thr = float(np.median([s[2] for s in samples]))
         kept = [s for s in samples if s[2] >= resp_thr] or samples
-        ddx = float(np.median([s[0] for s in kept]))
-        ddy = float(np.median([s[1] for s in kept]))
+        seed_ddx = float(dx0) - float(idx)
+        seed_ddy = float(dy0) - float(idy)
+        near = [
+            s
+            for s in kept
+            if abs(s[0] - seed_ddx) <= 0.75 and abs(s[1] - seed_ddy) <= 0.75
+        ]
+        use = near if len(near) >= 2 else kept
+        ddx = float(np.median([s[0] for s in use]))
+        ddy = float(np.median([s[1] for s in use]))
 
     dx = float(idx) + ddx
     dy = float(idy) + ddy

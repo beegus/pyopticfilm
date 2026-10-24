@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **RGB↔IR Y residual on pre-aligned pairs**: coarse still locks with gradients for multimodal shifts; when that coarse shift is already small, a same-scale structural-luma re-estimate cancels downsample-amplified gradient bias, then full-res luma ROI refine runs (seed kept if refine jumps to a worse ~1–2 px cross-modal lobe). Larger shifts refine on integer-sliced luma ROIs (remap pre-shift, multi-ROI response-filtered median).
+- **RGB↔IR residual on pre-aligned pairs**: coarse still locks with gradients for multimodal shifts; when that coarse shift is already small, a same-scale structural-luma re-estimate is merged per-axis with the gradient seed (agree → luma; disagree → smaller |shift|) so a competing ~1–2 px X/Y lobe cannot win. Full-res luma ROI refine is only kept as a ≤0.25 px polish around that seed; RGB↔IR never integer-snaps. Larger shifts refine on integer-sliced luma ROIs (remap pre-shift, multi-ROI response-filtered median near the seed).
 - **Registration remap parity**: `warp_shift` / linear / cubic / integer match banded `warp_row_shifts` (`dst = src(x - dx, y - dy)`), so Translation `apply_transform` actually aligns. ROI integer pre-shift uses the same convention. Guizar subpixel refine matches 5×5 centroid sign (ME/MP); RGB↔IR refine stays phase-only centroid.
 
 ### Removed
