@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Native NumPy pass registration** (`pyopticfilm.registration`): hierarchical windowed phase correlation with Guizar-Sicairos subpixel refinement on the refine ROI, mode-specific planes (Multi-Pass luminance, Multi-Exposure clip-aware, RGB↔IR gradient maps), integer-exact and separable bilinear/Keys-cubic resampling, and Multi-Pass row-banded Y profiles. ME short/long, Multi-Pass stacking, and IR→RGB alignment no longer require OpenCV. `tools/audit_me_bracket --align` defaults to the native engine and accepts `--engine={native,opencv,both}` for optional shadow comparison. `tools/bench_registration` reports accuracy, apply MP/s, and staged plane/coarse/refine timings.
+
+### Changed
+
+- **Registration estimate** builds coarse planes before gradients/FFT (block-mean first for RGB↔IR), refines a 512² integer-sliced center ROI (no full-frame warp during estimate), uses float32 FFTs, and keeps regional 3×3 checks off by default. Fractional apply uses slice-copy bilinear (no full `mgrid`). Typical estimate on 1800/3600 dpi RGB↔IR drops from multi-second to a few hundred milliseconds.
+
+### Fixed
+
+- **RGB↔IR Y residual vs OpenCV-aligned pairs**: coarse still locks with gradients for multimodal shifts; when that coarse shift is already small, a same-scale structural-luma re-estimate cancels downsample-amplified gradient bias. Larger shifts refine on integer-sliced luma ROIs with OpenCV-compatible 5×5 centroid (no fractional pre-warp, no Guizar; multi-ROI response-filtered median avoids a single bad vertical lobe).
+
+### Removed
+
+- **`opencv-python-headless`** from the `lab` dependency group. Pass registration is NumPy-only; OpenCV is optional only for audit comparison.
+
 ### Fixed
 
 - **GL128 frames were 24 px narrower than SilverFast at 1800 dpi and lost holder/film on the left** (8200i SE, 8100 V2, 8300i SE) ([#102](https://github.com/jboneng/pyopticfilm/issues/102)): pyopticfilm shifted the image window by 96 native clocks (STR/END 338/10706 instead of SilverFast's 242/10610) and trimmed up to 24 dark columns from the USB ENDPIXEL side, which is the image left after mirroring. The trim was added for a near-zero band that pyopticfilm, not SilverFast, produced at that edge. SilverFast's raw USB lines from the 8200i SE and 8300i SE have no such band, and a live 8200i SE scan with the current driver now shows the holder edge there instead. The trim was cutting real holder and film columns. All three models now program SilverFast's window and keep every column: 2592 px at 1800 dpi for a full frame, the same as SilverFast.

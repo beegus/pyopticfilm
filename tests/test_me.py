@@ -318,11 +318,7 @@ def test_expose_film_base_preserve_headroom_caps_gain():
     assert hi <= HOST_CALIB_HIGHLIGHT_CEILING + 50
 
 
-def test_align_pass_subpixel_shift_when_opencv_available():
-    try:
-        import cv2  # noqa: F401
-    except ImportError:
-        return
+def test_align_pass_subpixel_shift():
     from pyopticfilm.pass_align import align_pass_to_reference, estimate_pass_shift
 
     rng = np.random.default_rng(1)
@@ -342,10 +338,6 @@ def test_align_pass_tall_crop_accepts_large_dy_within_height_guard():
     width-derived threshold (regression for the 1096x6700 ghosting seen on
     real 8100 V2 hardware, where a real dy=-195.81 was ~9x a width-only
     guard but only ~3% of the frame's height)."""
-    try:
-        import cv2  # noqa: F401
-    except ImportError:
-        return
     from pyopticfilm.pass_align import align_pass_to_reference, estimate_pass_shift
 
     rng = np.random.default_rng(2)
@@ -367,10 +359,6 @@ def test_align_pass_to_reference_banded_recovers_progressive_drift():
     top/bottom (far from it) still ghosted even after applying that single
     global shift. Row-banded alignment should track the profile and leave
     a small residual at both ends, not just in the middle."""
-    try:
-        import cv2  # noqa: F401
-    except ImportError:
-        return
     from pyopticfilm.pass_align import align_pass_to_reference_banded
 
     rng = np.random.default_rng(5)
@@ -423,10 +411,6 @@ def test_band_shift_profile_refit_excludes_two_outlier_bands(monkeypatch):
     per-row drift line — dropping only the single worst residual and
     refitting once can leave a second bad band's ~100px error still
     dominating the fit, well past the outlier threshold."""
-    try:
-        import cv2  # noqa: F401
-    except ImportError:
-        return
     from pyopticfilm import pass_align
 
     h, w = 2048, 64

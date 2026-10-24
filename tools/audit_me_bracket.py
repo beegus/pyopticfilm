@@ -82,6 +82,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Estimate pass shift and report post-align luma residual",
     )
+    parser.add_argument(
+        "--engine",
+        choices=("native", "opencv", "both"),
+        default="native",
+        help="Alignment engine when --align is set (default: native). "
+        "'opencv' / 'both' require opencv-python-headless for comparison.",
+    )
     args = parser.parse_args(argv)
 
     short = _load(args.short)
@@ -96,21 +103,59 @@ def main(argv: list[str] | None = None) -> int:
     if args.align:
         from pyopticfilm.pass_align import align_pass_to_reference, estimate_pass_shift
 
-        align_shift = estimate_pass_shift(
-            short.astype(np.uint16), long.astype(np.uint16)
-        )
-        print("--- alignment ---")
-        print(f"  estimated shift (dx, dy)=({align_shift[0]:.3f}, {align_shift[1]:.3f})")
-        long_aligned, _ = align_pass_to_reference(
-            short.astype(np.uint16),
-            long.astype(np.uint16),
-            shift=align_shift,
-        )
+        short_u16 = short.astype(np.uint16)
+        long_u16 = long.astype(np.uint16)
         usb_r = args.exposure_long / float(args.exposure_short)
         lum_s = short.mean(axis=2)
-        lum_l = long_aligned.astype(np.float64).mean(axis=2) / usb_r
-        residual = float(np.mean(np.abs(lum_s - lum_l)))
-        print(f"  mean |luma_short − luma_long/r| after align = {residual:.1f} DN")
+
+        def _report(label: str, shift: tuple[float, float]) -> float:
+            print(f"  [{label}] shift (dx, dy)=({shift[0]:.3f}, {shift[1]:.3f})")
+            long_aligned, _ = align_pass_to_reference(
+                short_u16, long_u16, shift=shift
+            )
+            lum_l = long_aligned.astype(np.float64).mean(axis=2) / usb_r
+            residual = float(np.mean(np.abs(lum_s - lum_l)))
+            print(f"  [{label}] mean |luma_short − luma_long/r| = {residual:.1f} DN")
+            return residual
+
+        print("--- alignment ---")
+        if args.engine in ("native", "both"):
+            align_shift = estimate_pass_shift(short_u16, long_u16)
+            _report("native", align_shift)
+        if args.engine in ("opencv", "both"):
+            try:
+                import cv2
+            except ImportError:
+                print("  [opencv] unavailable — install opencv-python-headless", file=sys.stderr)
+                if args.engine == "opencv":
+                    return 1
+            else:
+                # Optional shadow comparator: OpenCV phaseCorrelate on luma probes.
+                from pyopticfilm.registration.preprocess import structural_luminance
+                from pyopticfilm.registration.pyramid import downsample_plane_to_width
+
+                ref_p, scale = downsample_plane_to_width(
+                    structural_luminance(short_u16), 1024
+                )
+                mov_p, _ = downsample_plane_to_width(
+                    structural_luminance(long_u16), 1024
+                )
+                h = min(ref_p.shape[0], mov_p.shape[0])
+                w = min(ref_p.shape[1], mov_p.shape[1])
+                win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+                (odx, ody), oresp = cv2.phaseCorrelate(
+                    np.ascontiguousarray(mov_p[:h, :w]),
+                    np.ascontiguousarray(ref_p[:h, :w]),
+                    win,
+                )
+                oshift = (float(odx * scale), float(ody * scale))
+                print(f"  [opencv] response={oresp:.4f}")
+                _report("opencv", oshift)
+                if args.engine == "opencv":
+                    align_shift = oshift
+        if args.engine == "native" or args.engine == "both":
+            # Deliverable shift for merge below stays native.
+            pass
 
     if args.merged is not None:
         merged = _load(args.merged)
