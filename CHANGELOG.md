@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **GL128 default full frames are exactly one inch tall, like SilverFast: 1800 rows at 1800 ppi** instead of 1801 ([#102](https://github.com/jboneng/pyopticfilm/issues/102)). SilverFast reads one inch plus the colour line shift plus one row, and returns the inch. pyopticfilm returned whatever was left after the line shift, so from 1800 ppi upwards the frame came out 1 to 5 rows too tall (for example 1801 at 1800 ppi and 3602 at 3600 ppi). On the 8200i SE, 8100 V2 and 8300i SE, a full-frame scan with no `area` is now cut to the inch after line shift and unstagger. Scanner registers and travel are unchanged. Crops and Scan Lab's Full window keep their current height.
 - **Scan Lab prescan background** is light grey instead of near-black, so dark film-holder edges stand out against the canvas. The other image tabs keep the dark background.
 
 ### Notes for integrators

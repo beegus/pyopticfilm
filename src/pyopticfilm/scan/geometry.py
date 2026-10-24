@@ -62,6 +62,10 @@ class ScanGeometry:
     #: 0 on every GL128 model: the holder edge reads dark there too, so any
     #: cap would cut real columns. Assemble never drops more than this width.
     usb_end_drop: int = 0
+    #: When > 0, assembled rows (at ``asic_dpi``) are cut to this height after
+    #: line shift and unstagger. Default full frames only, from the model's
+    #: ``full_frame_output_inches``.
+    frame_lines: int = 0
 
     @property
     def max_color_shift(self) -> int:
@@ -212,6 +216,12 @@ def _geometry_from_mm(
     lines = int((height_mm * asic_dpi) / MM_PER_INCH)
     if lines < 1:
         raise ValueError("Scan height too small")
+    frame_inches = float(getattr(model, "full_frame_output_inches", 0) or 0)
+    frame_lines = (
+        round(frame_inches * asic_dpi)
+        if is_default_full_frame and not disable_buffer_full_move and frame_inches > 0
+        else 0
+    )
 
     startx = int((tl_x_mm * asic_dpi) / MM_PER_INCH)
     starty = (
@@ -373,4 +383,5 @@ def _geometry_from_mm(
         area=area,
         host_downsample=host_downsample,
         usb_end_drop=max(0, min(int(usb_end_drop), max(0, pixels - 16))),
+        frame_lines=frame_lines,
     )
