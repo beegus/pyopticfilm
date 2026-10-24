@@ -378,7 +378,10 @@ class Gl128Common:
     pixel_alignment: int = 1
     optical_span_alignment: int = 4
     strpixel_native_units: bool = True
-    optical_end_inactive_native: int = 96
+    #: Native clocks trimmed from the USB ENDPIXEL side (and shifted into the
+    #: window). SilverFast reads the full STR/END span and its USB lines carry
+    #: no ENDPIXEL dummy on any GL128 model, so nothing is trimmed (#102).
+    optical_end_inactive_native: int = 0
     min_asic_dpi: int = MIN_ASIC_DPI
 
     x_size_mm: float = 36.0
