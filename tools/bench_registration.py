@@ -56,9 +56,7 @@ def _print_table(title: str, rows: list[Row]) -> None:
     print(f"{'case':<42} {'dx_err':>8} {'dy_err':>8} {'ms':>9}  notes")
     print("-" * 90)
     for r in rows:
-        print(
-            f"{r.name:<42} {r.dx_err:8.3f} {r.dy_err:8.3f} {r.ms:9.1f}  {r.extra}"
-        )
+        print(f"{r.name:<42} {r.dx_err:8.3f} {r.dy_err:8.3f} {r.ms:9.1f}  {r.extra}")
 
 
 def timed_estimate(
@@ -70,9 +68,7 @@ def timed_estimate(
     opt = RegistrationOptions()
     stages: dict[str, float] = {}
     t0 = time.perf_counter()
-    coarse_ref, coarse_mov, scale = coarse_registration_pair(
-        reference, moving, mode, target_w=opt.coarse_target_px
-    )
+    coarse_ref, coarse_mov, scale = coarse_registration_pair(reference, moving, mode, target_w=opt.coarse_target_px)
     stages["plane_ms"] = _ms(t0)
 
     t1 = time.perf_counter()
@@ -160,9 +156,7 @@ def bench_synthetic_banded() -> list[Row]:
     ms = _ms(t0)
 
     def resid(a, b, y0, y1):
-        return float(
-            np.mean(np.abs(a[y0:y1].astype(np.float64) - b[y0:y1].astype(np.float64)))
-        )
+        return float(np.mean(np.abs(a[y0:y1].astype(np.float64) - b[y0:y1].astype(np.float64))))
 
     band = 200
     top = resid(reference, warped, 0, band)
@@ -210,15 +204,11 @@ def _load_pair(rgb_path: Path, ir_path: Path) -> tuple[np.ndarray, np.ndarray, i
     return rgb, ir, dpi
 
 
-def _diag_refine_variants(
-    rgb: np.ndarray, ir: np.ndarray, label: str
-) -> list[Row]:
+def _diag_refine_variants(rgb: np.ndarray, ir: np.ndarray, label: str) -> list[Row]:
     """Compare coarse-only vs refine plane/estimator choices (RGB↔IR residual)."""
     opt = RegistrationOptions()
     mode = RegistrationMode.RGB_IR
-    coarse_ref, coarse_mov, scale = coarse_registration_pair(
-        rgb, ir, mode, target_w=opt.coarse_target_px
-    )
+    coarse_ref, coarse_mov, scale = coarse_registration_pair(rgb, ir, mode, target_w=opt.coarse_target_px)
     cdx, cdy, _ = phase_correlate_shift(coarse_ref, coarse_mov, scale=scale)
     rows = [
         Row(
@@ -262,12 +252,8 @@ def _diag_refine_variants(
     t0 = time.perf_counter()
     seed = (cdx, cdy)
     if max(abs(cdx), abs(cdy)) <= opt.refine_max_residual + 0.5:
-        luma_ref, luma_mov, luma_scale = coarse_luma_registration_pair(
-            rgb, ir, target_w=opt.coarse_target_px
-        )
-        ldx, ldy, _ = phase_correlate_shift(
-            luma_ref, luma_mov, scale=luma_scale, upsample=1
-        )
+        luma_ref, luma_mov, luma_scale = coarse_luma_registration_pair(rgb, ir, target_w=opt.coarse_target_px)
+        ldx, ldy, _ = phase_correlate_shift(luma_ref, luma_mov, scale=luma_scale, upsample=1)
         seed = (ldx, ldy)
     dx, dy = _refine_translation(rgb, ir, seed, mode, opt, second_pass=False)
     rows.append(
@@ -282,9 +268,7 @@ def _diag_refine_variants(
     return rows
 
 
-def bench_real_ir(
-    root: Path, *, skip_7200: bool, diag: bool = False
-) -> list[Row]:
+def bench_real_ir(root: Path, *, skip_7200: bool, diag: bool = False) -> list[Row]:
     rows: list[Row] = []
     pairs = sorted(root.glob("*.tif"))
     rgb_files = [p for p in pairs if not p.name.endswith("_IR.tif")]
@@ -332,8 +316,7 @@ def bench_real_ir(
                 abs(dx - true[0]),
                 abs(dy - true[1]),
                 ms,
-                f"got=({dx:.2f},{dy:.2f}) align+apply={ms_apply:.0f}ms "
-                f"acc={result.accepted}",
+                f"got=({dx:.2f},{dy:.2f}) align+apply={ms_apply:.0f}ms acc={result.accepted}",
             )
         )
     return rows

@@ -34,9 +34,7 @@ def test_register_and_align_me_gain_change():
     short = rng.integers(2000, 12000, (128, 128, 3), dtype=np.uint16)
     long = np.clip(short.astype(np.float64) * 3.0, 0, 65535).astype(np.uint16)
     long = warp_shift(long, -2.0, -1.0)
-    aligned, result = register_and_align(
-        short, long, RegistrationMode.MULTI_EXPOSURE
-    )
+    aligned, result = register_and_align(short, long, RegistrationMode.MULTI_EXPOSURE)
     assert result.accepted
     assert abs(result.shift[0] - 2.0) < 0.75
     assert abs(result.shift[1] - 1.0) < 0.75
@@ -60,9 +58,5 @@ def test_banded_beats_whole_frame_on_progressive_drift():
         return np.abs(a[y0:y1].astype(np.float64) - b[y0:y1].astype(np.float64)).mean()
 
     band = 200
-    assert residual(reference, warped, 0, band) < 0.75 * residual(
-        reference, whole, 0, band
-    )
-    assert residual(reference, warped, h - band, h) < 0.75 * residual(
-        reference, whole, h - band, h
-    )
+    assert residual(reference, warped, 0, band) < 0.75 * residual(reference, whole, 0, band)
+    assert residual(reference, warped, h - band, h) < 0.75 * residual(reference, whole, h - band, h)

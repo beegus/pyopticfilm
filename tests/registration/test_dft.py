@@ -30,7 +30,7 @@ def test_guizar_matches_brute_force_on_small_array():
     gdx, gdy = refine_peak_guizar(cross, iy, ix, upsample_factor=16)
     bdx, bdy = brute_force_upsample_peak(cross, upsample_factor=16, search_radius=3.0)
     # Guizar and brute should agree closely; both near the true shift of b vs a.
-    # cross = Fa * conj(Fb): peak location is shift of b relative to a? 
+    # cross = Fa * conj(Fb): peak location is shift of b relative to a?
     # We mainly check Guizar ≈ brute.
     assert abs(gdx - bdx) < 0.15
     assert abs(gdy - bdy) < 0.15

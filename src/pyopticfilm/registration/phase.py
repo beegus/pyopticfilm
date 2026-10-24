@@ -137,9 +137,7 @@ def phase_correlate_shift(
     return float(dx * scale), float(dy * scale), float(resp)
 
 
-def top_k_peaks(
-    corr: np.ndarray, k: int = 5, *, min_separation: int = 3
-) -> list[tuple[int, int, float]]:
+def top_k_peaks(corr: np.ndarray, k: int = 5, *, min_separation: int = 3) -> list[tuple[int, int, float]]:
     """Unshifted correlation peaks as ``(iy, ix, value)`` with local suppression."""
     work = corr.copy()
     peaks: list[tuple[int, int, float]] = []

@@ -23,9 +23,7 @@ def test_integer_warp_exact_overlap():
     # fill uses ~2*|shift| as the donor, so keep a deeper interior crop.
     y0, y1 = 2 * abs(dy), 32 - 2 * abs(dy)
     x0, x1 = 2 * abs(dx), 40 - 2 * abs(dx)
-    assert np.array_equal(
-        out[y0:y1, x0:x1], src[y0 - dy : y1 - dy, x0 - dx : x1 - dx]
-    )
+    assert np.array_equal(out[y0:y1, x0:x1], src[y0 - dy : y1 - dy, x0 - dx : x1 - dx])
 
 
 def test_cubic_preserves_constant_field():

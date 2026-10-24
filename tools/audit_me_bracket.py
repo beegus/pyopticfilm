@@ -71,12 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional SilverFast ME TIFF for same-bracket abs-diff",
     )
-    parser.add_argument(
-        "--exposure-short", type=int, default=14000, help="USB short LPERIOD"
-    )
-    parser.add_argument(
-        "--exposure-long", type=int, default=42000, help="USB long LPERIOD"
-    )
+    parser.add_argument("--exposure-short", type=int, default=14000, help="USB short LPERIOD")
+    parser.add_argument("--exposure-long", type=int, default=42000, help="USB long LPERIOD")
     parser.add_argument(
         "--align",
         action="store_true",
@@ -104,9 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         print("--- alignment ---")
         align_shift = estimate_pass_shift(short_u16, long_u16)
         print(f"  shift (dx, dy)=({align_shift[0]:.3f}, {align_shift[1]:.3f})")
-        long_aligned, _ = align_pass_to_reference(
-            short_u16, long_u16, shift=align_shift
-        )
+        long_aligned, _ = align_pass_to_reference(short_u16, long_u16, shift=align_shift)
         lum_l = long_aligned.astype(np.float64).mean(axis=2) / usb_r
         residual = float(np.mean(np.abs(lum_s - lum_l)))
         print(f"  mean |luma_short − luma_long/r| = {residual:.1f} DN")
@@ -141,18 +135,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print("--- planes ---")
     print(f"  shape {short.shape[1]}×{short.shape[0]}")
-    print(
-        f"  short meanY={_mean_y(short):.4f}  "
-        f"clip@92% RGB={tuple(f'{c:.2%}' for c in _clip_frac(short))}"
-    )
-    print(
-        f"  long  meanY={_mean_y(long):.4f}  "
-        f"clip@92% RGB={tuple(f'{c:.2%}' for c in _clip_frac(long))}"
-    )
-    print(
-        f"  merged meanY={_mean_y(merged):.4f}  "
-        f"clip@92% RGB={tuple(f'{c:.2%}' for c in _clip_frac(merged))}"
-    )
+    print(f"  short meanY={_mean_y(short):.4f}  clip@92% RGB={tuple(f'{c:.2%}' for c in _clip_frac(short))}")
+    print(f"  long  meanY={_mean_y(long):.4f}  clip@92% RGB={tuple(f'{c:.2%}' for c in _clip_frac(long))}")
+    print(f"  merged meanY={_mean_y(merged):.4f}  clip@92% RGB={tuple(f'{c:.2%}' for c in _clip_frac(merged))}")
     print(f"  USB ratio={usb_r:.3f}  mean(long)/mean(short)={long.mean() / max(short.mean(), 1):.3f}")
     print("--- correlations ---")
     print(f"  corr(merged, long)  = {_corr(merged, long):.6f}")

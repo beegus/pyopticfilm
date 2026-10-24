@@ -34,9 +34,7 @@ def test_phase_correlate_shift_recovers_warp():
     base = rng.integers(1000, 20000, (96, 96), dtype=np.uint16)
     # Create with inverse remap so estimate recovers the apply shift (+3,-2).
     mov = warp_shift(base, -3.0, 2.0)
-    dx, dy, resp = phase_correlate_shift(
-        base.astype(np.float32), mov.astype(np.float32)
-    )
+    dx, dy, resp = phase_correlate_shift(base.astype(np.float32), mov.astype(np.float32))
     assert resp > 0.05
     assert abs(dx - 3.0) < 0.5
     assert abs(dy - (-2.0)) < 0.5

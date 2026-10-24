@@ -10,9 +10,7 @@ from pyopticfilm.registration.pyramid import downsample_plane_to_width
 from pyopticfilm.registration.types import LineWarpTransform, RegistrationOptions
 
 
-def shift_is_pathological(
-    dx: float, dy: float, full_w: int, full_h: int, *, max_frac: float = 0.5
-) -> bool:
+def shift_is_pathological(dx: float, dy: float, full_w: int, full_h: int, *, max_frac: float = 0.5) -> bool:
     return abs(dx) > max_frac * full_w or abs(dy) > max_frac * full_h
 
 
@@ -84,9 +82,7 @@ def band_shift_profile(
     if float(np.max(dy_per_row) - np.min(dy_per_row)) > 0.5 * h:
         return None
     dx_med = float(np.median(dx_arr))
-    if shift_is_pathological(
-        dx_med, float(np.max(np.abs(dy_per_row))), w, h, max_frac=opt.sanity_max_frac
-    ):
+    if shift_is_pathological(dx_med, float(np.max(np.abs(dy_per_row))), w, h, max_frac=opt.sanity_max_frac):
         return None
     return dx_med, dy_per_row
 

@@ -39,9 +39,7 @@ _RGB_IR_SEED_AGREE_PX = 0.5
 _RGB_IR_REFINE_KEEP_SEED_PX = 0.25
 
 
-def _rgb_ir_merge_seed_axes(
-    grad_dx: float, grad_dy: float, luma_dx: float, luma_dy: float
-) -> tuple[float, float]:
+def _rgb_ir_merge_seed_axes(grad_dx: float, grad_dy: float, luma_dx: float, luma_dy: float) -> tuple[float, float]:
     """Per-axis merge of gradient coarse and luma coarse for RGB↔IR."""
 
     def one(g: float, l: float) -> float:
@@ -52,9 +50,7 @@ def _rgb_ir_merge_seed_axes(
     return one(grad_dx, luma_dx), one(grad_dy, luma_dy)
 
 
-def _rgb_ir_keep_seed_axes(
-    seed_dx: float, seed_dy: float, ref_dx: float, ref_dy: float
-) -> tuple[float, float]:
+def _rgb_ir_keep_seed_axes(seed_dx: float, seed_dy: float, ref_dx: float, ref_dy: float) -> tuple[float, float]:
     """Keep seed on an axis if refine jumped farther from zero by > margin."""
 
     def one(s: float, r: float) -> float:
@@ -95,23 +91,15 @@ def estimate_translation(
     ref = np.asarray(reference)
     mov = np.asarray(moving)
     if ref.size == 0 or mov.size == 0 or ref.shape[:2] != mov.shape[:2]:
-        return _zero_result(
-            mode, reason="shape mismatch", failure=RegistrationFailure.SHAPE_MISMATCH
-        )
+        return _zero_result(mode, reason="shape mismatch", failure=RegistrationFailure.SHAPE_MISMATCH)
 
     full_h, full_w = ref.shape[:2]
-    coarse_ref, coarse_mov, scale = coarse_registration_pair(
-        ref, mov, mode, target_w=opt.coarse_target_px
-    )
+    coarse_ref, coarse_mov, scale = coarse_registration_pair(ref, mov, mode, target_w=opt.coarse_target_px)
 
-    dx, dy, resp = phase_correlate_shift(
-        coarse_ref, coarse_mov, scale=scale, upsample=1
-    )
+    dx, dy, resp = phase_correlate_shift(coarse_ref, coarse_mov, scale=scale, upsample=1)
 
     if not np.isfinite(dx) or not np.isfinite(dy):
-        return _zero_result(
-            mode, reason="non-finite shift", failure=RegistrationFailure.LOW_TEXTURE
-        )
+        return _zero_result(mode, reason="non-finite shift", failure=RegistrationFailure.LOW_TEXTURE)
 
     if resp < opt.min_response:
         logger.warning(
@@ -137,27 +125,16 @@ def estimate_translation(
     # (agree → luma; disagree → smaller |shift| to avoid a 1–2 px cross-modal lobe).
     seed_dx, seed_dy = float(dx), float(dy)
     used_rgb_ir_seed = False
-    if (
-        mode is RegistrationMode.RGB_IR
-        and max(abs(dx), abs(dy)) <= opt.refine_max_residual + 0.5
-    ):
-        luma_ref, luma_mov, luma_scale = coarse_luma_registration_pair(
-            ref, mov, target_w=opt.coarse_target_px
-        )
-        ldx, ldy, lresp = phase_correlate_shift(
-            luma_ref, luma_mov, scale=luma_scale, upsample=1
-        )
+    if mode is RegistrationMode.RGB_IR and max(abs(dx), abs(dy)) <= opt.refine_max_residual + 0.5:
+        luma_ref, luma_mov, luma_scale = coarse_luma_registration_pair(ref, mov, target_w=opt.coarse_target_px)
+        ldx, ldy, lresp = phase_correlate_shift(luma_ref, luma_mov, scale=luma_scale, upsample=1)
         if (
             np.isfinite(ldx)
             and np.isfinite(ldy)
             and lresp >= opt.min_response
-            and not shift_is_pathological(
-                ldx, ldy, full_w, full_h, max_frac=opt.sanity_max_frac
-            )
+            and not shift_is_pathological(ldx, ldy, full_w, full_h, max_frac=opt.sanity_max_frac)
         ):
-            seed_dx, seed_dy = _rgb_ir_merge_seed_axes(
-                seed_dx, seed_dy, float(ldx), float(ldy)
-            )
+            seed_dx, seed_dy = _rgb_ir_merge_seed_axes(seed_dx, seed_dy, float(ldx), float(ldy))
             used_rgb_ir_seed = True
     dx, dy = _refine_translation(ref, mov, (seed_dx, seed_dy), mode, opt)
     if used_rgb_ir_seed:
@@ -201,24 +178,15 @@ def estimate_translation(
         consensus = consensus_translation(regions)
         if consensus is not None:
             cdx, cdy, regional_mad, inliers = consensus
-            if (
-                regional_mad < 1.5
-                and inliers >= 3
-                and abs(cdx - dx) < 2.0
-                and abs(cdy - dy) < 2.0
-            ):
+            if regional_mad < 1.5 and inliers >= 3 and abs(cdx - dx) < 2.0 and abs(cdy - dy) < 2.0:
                 dx = 0.5 * (dx + cdx)
                 dy = 0.5 * (dy + cdy)
 
     if context is not None:
         if context.max_abs_dx is not None and abs(dx) > context.max_abs_dx:
-            return _zero_result(
-                mode, reason="outside prior dx", failure=RegistrationFailure.OUTSIDE_SCANNER_PRIOR
-            )
+            return _zero_result(mode, reason="outside prior dx", failure=RegistrationFailure.OUTSIDE_SCANNER_PRIOR)
         if context.max_abs_dy is not None and abs(dy) > context.max_abs_dy:
-            return _zero_result(
-                mode, reason="outside prior dy", failure=RegistrationFailure.OUTSIDE_SCANNER_PRIOR
-            )
+            return _zero_result(mode, reason="outside prior dy", failure=RegistrationFailure.OUTSIDE_SCANNER_PRIOR)
 
     # RGB↔IR: never integer-snap — cross-modal peaks often sit ~0.5–1 px off an
     # integer and snapping pulls X/Y onto the wrong lobe (e.g. −1.5 → −2).
@@ -239,11 +207,7 @@ def estimate_translation(
     # Production: accept unless pathological / low response already returned.
     # Regional disagreement only hard-rejects when regional was enabled.
     accepted = failure in (RegistrationFailure.NONE, RegistrationFailure.REGIONAL_DISAGREEMENT)
-    if (
-        opt.enable_regional
-        and failure is RegistrationFailure.REGIONAL_DISAGREEMENT
-        and regional_mad > 4.0
-    ):
+    if opt.enable_regional and failure is RegistrationFailure.REGIONAL_DISAGREEMENT and regional_mad > 4.0:
         accepted = False
 
     quality = RegistrationQuality(
@@ -299,15 +263,9 @@ def _roi_residual(
     tw = min(rw, w - tx0, w - mx0)
     if th < 64 or tw < 64:
         return None
-    ref_roi = roi_registration_plane(
-        reference[ty0 : ty0 + th, tx0 : tx0 + tw], mode, force=plane_force
-    )
-    mov_roi = roi_registration_plane(
-        moving[my0 : my0 + th, mx0 : mx0 + tw], mode, force=plane_force
-    )
-    ddx, ddy, resp = phase_correlate_shift(
-        ref_roi, mov_roi, scale=1.0, upsample=upsample
-    )
+    ref_roi = roi_registration_plane(reference[ty0 : ty0 + th, tx0 : tx0 + tw], mode, force=plane_force)
+    mov_roi = roi_registration_plane(moving[my0 : my0 + th, mx0 : mx0 + tw], mode, force=plane_force)
+    ddx, ddy, resp = phase_correlate_shift(ref_roi, mov_roi, scale=1.0, upsample=upsample)
     return float(ddx), float(ddy), float(resp)
 
 
@@ -338,8 +296,8 @@ def _refine_translation(
     dx0, dy0 = coarse
     rh = min(opt.refine_roi_side, h)
     rw = min(opt.refine_roi_side, w)
-    idx = int(round(dx0))
-    idy = int(round(dy0))
+    idx = round(dx0)
+    idy = round(dy0)
 
     # Guizar on ME/MP only: RGB↔IR cross-modal peaks favor phase-only centroid.
     guizar_ok = (
@@ -408,11 +366,7 @@ def _refine_translation(
         kept = [s for s in samples if s[2] >= resp_thr] or samples
         seed_ddx = float(dx0) - float(idx)
         seed_ddy = float(dy0) - float(idy)
-        near = [
-            s
-            for s in kept
-            if abs(s[0] - seed_ddx) <= 0.75 and abs(s[1] - seed_ddy) <= 0.75
-        ]
+        near = [s for s in kept if abs(s[0] - seed_ddx) <= 0.75 and abs(s[1] - seed_ddy) <= 0.75]
         use = near if len(near) >= 2 else kept
         ddx = float(np.median([s[0] for s in use]))
         ddy = float(np.median([s[1] for s in use]))
@@ -435,20 +389,11 @@ def _refine_translation(
         if th >= 64 and tw >= 64:
             mov_tile = moving[my0 : my0 + th, mx0 : mx0 + tw]
             # Remap-apply the residual so the tile is near-aligned for remeasure.
-            mov_aligned = warp_shift(
-                mov_tile, ddx, ddy, method="linear", chunk_rows=th
-            )
-            ref_roi = roi_registration_plane(
-                reference[y0 : y0 + th, x0 : x0 + tw], mode, force=plane_force
-            )
+            mov_aligned = warp_shift(mov_tile, ddx, ddy, method="linear", chunk_rows=th)
+            ref_roi = roi_registration_plane(reference[y0 : y0 + th, x0 : x0 + tw], mode, force=plane_force)
             mov_roi2 = roi_registration_plane(mov_aligned, mode, force=plane_force)
-            ddx2, ddy2, resp2 = phase_correlate_shift(
-                ref_roi, mov_roi2, scale=1.0, upsample=1
-            )
-            if (
-                resp2 >= opt.min_response
-                and max(abs(ddx2), abs(ddy2)) <= opt.refine_max_residual
-            ):
+            ddx2, ddy2, resp2 = phase_correlate_shift(ref_roi, mov_roi2, scale=1.0, upsample=1)
+            if resp2 >= opt.min_response and max(abs(ddx2), abs(ddy2)) <= opt.refine_max_residual:
                 dx += ddx2
                 dy += ddy2
 
@@ -468,9 +413,7 @@ def estimate_banded(
     ref = np.asarray(reference)
     mov = np.asarray(moving)
     if mov.size == 0 or ref.shape[:2] != mov.shape[:2]:
-        return _zero_result(
-            mode, reason="shape mismatch", failure=RegistrationFailure.SHAPE_MISMATCH
-        )
+        return _zero_result(mode, reason="shape mismatch", failure=RegistrationFailure.SHAPE_MISMATCH)
 
     profile = band_shift_profile(ref, mov, options=opt, phase_fn=phase_fn)
     if profile is None:
@@ -517,9 +460,7 @@ def register(
     use_banded = banded if banded is not None else (mode is RegistrationMode.MULTI_PASS)
     if use_banded:
         return estimate_banded(reference, moving, options=options)
-    return estimate_translation(
-        reference, moving, mode, options=options, context=context
-    )
+    return estimate_translation(reference, moving, mode, options=options, context=context)
 
 
 def apply_transform(
@@ -532,9 +473,7 @@ def apply_transform(
     """Apply ``transform`` once to ``moving`` (never mutates input)."""
     mov = np.asarray(moving)
     if isinstance(transform, LineWarpTransform):
-        return warp_row_shifts(
-            mov, transform.dx, transform.dy_per_row, method=method, chunk_rows=chunk_rows
-        )
+        return warp_row_shifts(mov, transform.dx, transform.dy_per_row, method=method, chunk_rows=chunk_rows)
     dx, dy = float(transform.dx), float(transform.dy)
     if abs(dx) < 1e-9 and abs(dy) < 1e-9:
         return mov

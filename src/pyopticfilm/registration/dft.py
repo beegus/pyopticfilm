@@ -37,7 +37,7 @@ def refine_peak_guizar(
     dftshift = float(np.trunc(nout / 2.0))
     # Matrix-multiply DFT (Guizar-Sicairos eq. for localized IFFT).
     # Kernels along each axis:
-    #   kernc[x, k] = exp(2πi * k * (x - dftshift - peak_x*u) / (u*W))  ... 
+    #   kernc[x, k] = exp(2πi * k * (x - dftshift - peak_x*u) / (u*W))  ...
     # Using the common skimage/Guizar formulation:
     nor = nout
     noc = nout

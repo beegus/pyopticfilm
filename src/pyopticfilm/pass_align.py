@@ -59,9 +59,7 @@ def _default_options() -> RegistrationOptions:
     )
 
 
-def _phase_correlate_shift(
-    ref: np.ndarray, mov: np.ndarray, *, scale: float
-) -> tuple[float, float, float]:
+def _phase_correlate_shift(ref: np.ndarray, mov: np.ndarray, *, scale: float) -> tuple[float, float, float]:
     """Returns ``(dx, dy, response)`` — peak-sharpness trust signal."""
     return phase_correlate_shift(ref, mov, scale=scale)
 
@@ -126,9 +124,7 @@ def align_pass_to_reference(
     return _warp_shift(mov, dx, dy), (dx, dy)
 
 
-def align_pass_to_reference_banded(
-    reference: np.ndarray, moving: np.ndarray
-) -> tuple[np.ndarray, Shift2D]:
+def align_pass_to_reference_banded(reference: np.ndarray, moving: np.ndarray) -> tuple[np.ndarray, Shift2D]:
     """Row-banded Multi-Pass alignment (production default)."""
     ref = np.asarray(reference)
     mov = np.asarray(moving)
