@@ -22,11 +22,6 @@ class DriverBindingError(PlustekError):
 
 class UsbError(PlustekError):
     """USB control/bulk transfer failure or link loss."""
-    errno: int | None
-
-    def __init__(self, *args, errno: int | None = None):
-        super().__init__(*args)
-        self.errno = errno
 
 
 class ScanError(PlustekError):
