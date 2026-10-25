@@ -13,8 +13,8 @@ Real RGB↔IR (optional ``--real DIR``):
 Usage::
 
     uv run python -m tools.bench_registration
-    uv run python -m tools.bench_registration --real D:/test3
-    uv run python -m tools.bench_registration --real D:/test3 --skip-7200
+    uv run python -m tools.bench_registration --real D:/pyopticfilm_data/scans/opticfilm_8200i_se/2026-10-23_test3
+    uv run python -m tools.bench_registration --real D:/pyopticfilm_data/scans/opticfilm_8200i_se/2026-10-23_test3 --skip-7200
 """
 
 from __future__ import annotations
