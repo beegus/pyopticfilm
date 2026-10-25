@@ -18,25 +18,13 @@ import argparse
 import sys
 import time
 
-from pyopticfilm import Scanner, UsbError
+from pyopticfilm import Scanner
 from pyopticfilm.asic.buttons import Button
 
 ACTIONS = {
     Button.QUICK_SCAN: "preview scan",
     Button.INTELLI_SCAN: "full scan",
 }
-
-
-def poll_buttons(scanner: Scanner, timeout_ms: int = 250) -> set[Button]:
-    """One poll; an idle scanner times out or returns no bytes, which is no press."""
-    try:
-        return scanner.button_state(timeout_ms=timeout_ms)
-    except IndexError:
-        return set()
-    except UsbError as exc:
-        if "time" in str(exc).lower():
-            return set()
-        raise
 
 
 def main() -> int:
@@ -53,7 +41,7 @@ def main() -> int:
         end = None if args.seconds is None else time.monotonic() + args.seconds
         try:
             while end is None or time.monotonic() < end:
-                for button in poll_buttons(scanner):
+                for button in scanner.button_state(timeout_ms=250):
                     print(f"{time.strftime('%H:%M:%S')}  {button.value:<12} -> {ACTIONS[button]}")
         except KeyboardInterrupt:
             print()
