@@ -250,7 +250,8 @@ def _map_usb_exception(exc: BaseException) -> Exception:
         return DriverBindingError(
             f"{message}. On Windows, bind WinUSB with Zadig — see docs/windows-setup.md."
         )
-    return UsbError(message)
+
+    return UsbError(message, errno=getattr(exc, "errno", None))
 
 
 def _pick_preferred_device(devices: list[UsbDeviceInfo]) -> UsbDeviceInfo:

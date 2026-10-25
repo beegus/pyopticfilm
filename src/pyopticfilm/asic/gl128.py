@@ -31,7 +31,7 @@ from pyopticfilm.asic.status import ScannerStatus
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.protocol import Gl128Model
 from pyopticfilm.device.tables_8200i_se import exposure_table
-from pyopticfilm.exceptions import AsicError, MotorTimeoutError, ScanError
+from pyopticfilm.exceptions import AsicError, MotorTimeoutError, ScanError, UsbError
 from pyopticfilm.logging import get_logger
 from pyopticfilm.scan.calib_gl128 import (
     AFE_ENDPIXEL,
@@ -1303,12 +1303,23 @@ class Gl128:
     # --- buttons --------------------------------------------------------
 
     def button_state(self, timeout_ms: int = 0) -> set[Button]:
-        button_byte = self.protocol.read_intr(timeout_ms=timeout_ms)[0]
         buttons = set()
+
+        try:
+            data = self.protocol.read_intr(timeout_ms=timeout_ms)
+        except UsbError as error:
+            if error.errno == 110: # Timeout
+                return buttons
+            raise
+        if len(data) == 0:
+            return buttons
+        button_byte = data[0]
+
         for id, button in BUTTON_IDS:
             if button_byte & id == 0:
                 continue
             buttons.add(button)
+
         return buttons
 
 
