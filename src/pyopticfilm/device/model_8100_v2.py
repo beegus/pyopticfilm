@@ -82,6 +82,7 @@ from pyopticfilm.device.gl128_common import (
     SCAN_REGS,
     Gl128Common,
 )
+from pyopticfilm.device.tables_8200i_se import EXPOSURE_TABLE_LENGTH
 
 # V2 7200 dpi LPERIOD observed in all three scan phases (dark/white shading and
 # image pass): 16 035.  All other DPI entries are carried over from the shared
@@ -205,6 +206,12 @@ class Model8100V2(Gl128Common):
         if dvdset and self.asic_dpi_for(resolution) == 7200:
             return 0x10, 0x01, 0x01
         return super().shading_strip_clocks(resolution, dvdset=dvdset)
+
+    def white_origin_advance(self) -> tuple[int, int, tuple[int, ...]]:
+        """V2 white strip from ``04_color_7200``: 7200 dpi, ``0x1D=0x82``, flat 10500."""
+        low = 2
+        period = int(self.exposure_lperiod) * (low + 1) // 4
+        return 7200, low, (period,) * EXPOSURE_TABLE_LENGTH
 
     def scaled_ld_shift(self, ld: int, asic_dpi: int) -> int:
         """Round line-distance shifts (floor left G +0.8 / B +0.6 rows at 1440)."""
