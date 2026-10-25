@@ -158,6 +158,64 @@ def test_the_idle_wait_returns_once_the_motor_bit_clears():
     assert asic.read_status_reliable.call_count == 3
 
 
+def test_reference_feed_gives_up_long_before_a_runaway_reaches_the_end_stop():
+    usb = MockScannerTransport()
+    asic = create_asic(GenesysUsbProtocol(usb), MODEL_8200I_SE)
+    asic._motor_moves_enabled = True
+    timeouts: list[float] = []
+    orig = asic._feed_capture
+
+    def spy(steps, **kwargs):
+        timeouts.append(kwargs["timeout_s"])
+        return orig(steps, **kwargs)
+
+    asic._feed_capture = spy
+
+    asic.position_for_full_frame_scan(scan_steps=13704, timeout_s=60.0)
+
+    assert timeouts == [gl128_mod._REFERENCE_FEED_TIMEOUT_S, 30.0]
+    assert gl128_mod._REFERENCE_FEED_TIMEOUT_S < 3.0
+
+
+def test_a_reference_feed_without_the_probe_signal_drops_motor_power(monkeypatch):
+    asic = _asic()
+    asic._read_feed_probe = lambda: 0
+    asic.read_status_reliable = lambda: SimpleNamespace(
+        is_motor_enabled=True, is_feeding_finished=False, is_at_home=False, raw=0xC5
+    )
+    monkeypatch.setattr(asic, "stop_motor", MagicMock())
+    monkeypatch.setattr(asic, "_update_bits", MagicMock())
+
+    with pytest.raises(MotorTimeoutError, match="did not finish within"):
+        asic._wait_feed_probe_done(steps=28292, timeout_s=0.05, require_motion=True)
+
+    asic.stop_motor.assert_called_once()
+    asic._update_bits.assert_called_once_with(asic.registers.REG_0x02, clear_bits=asic.registers.MTRPWR)
+
+
+@pytest.mark.parametrize("model_name", ["MODEL_8200I_SE", "MODEL_8300I_SE", "MODEL_8100_V2"])
+def test_the_scan_start_feed_uses_the_vendor_0xaf(model_name):
+    """#102: SilverFast writes 0xAF=0x7F before feed1 and 0xFF before feed2 on every sibling."""
+    import pyopticfilm.device as devices
+
+    model = getattr(devices, model_name)
+    asic = create_asic(GenesysUsbProtocol(MockScannerTransport()), model)
+    asic._motor_moves_enabled = True
+    af_at_start: list[int] = []
+    orig_write = asic._write
+
+    def _write(address: int, value: int) -> None:
+        if address == asic.registers.REG_START:
+            af_at_start.append(asic._reg_cache.get(0xAF))
+        orig_write(address, value)
+
+    asic._write = _write
+
+    asic.position_for_full_frame_scan(scan_steps=13128)
+
+    assert af_at_start == [0x7F, 0xFF]
+
+
 def test_positioning_pair_still_completes_on_the_mock():
     usb = MockScannerTransport()
     asic = create_asic(GenesysUsbProtocol(usb), MODEL_8200I_SE)

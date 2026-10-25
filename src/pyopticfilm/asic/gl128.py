@@ -125,6 +125,16 @@ _FEED_START_TIMEOUT_S = 2.0
 #: the feed registers or the slope RAM again. A ramp loaded into a moving motor stalls it.
 _MOTOR_IDLE_TIMEOUT_S = 2.0
 _MOTOR_IDLE_POLL_S = 0.015
+#: The reference feed ends when the vendor probe reads ``0x04``, about 0.9 s after
+#: START on every GL128 sibling and PPI, long before its ``FEEDL`` runs out. A
+#: carriage that starts off home can miss that signal and run on to the end
+#: stop (8200i SE, #102), so give up well before ``FEEDL`` would finish.
+_REFERENCE_FEED_TIMEOUT_S = 2.5
+#: The carriage keeps moving after the probe reads ``0x04`` until ``MTRPWR`` drops,
+#: about 0.33 rows per ms at 1800 dpi on the 8200i SE, so the probe poll interval
+#: is position jitter. SilverFast polls every 15.6 ms (8200i SE, 8100 V2) or takes
+#: the interrupt endpoint (8300i SE).
+_FEED_PROBE_POLL_S = 0.002
 
 #: Register block written immediately before every captured fast feed
 #: (session 03 t≈8.98). Values are constants in the captures, not DPI-dependent.
@@ -158,6 +168,11 @@ _FEED_SETUP_REGS: dict[int, int] = {
     0xAE: 0x00,
     0xAF: 0x7F,
 }
+#: ``0xAF`` on the second (scan-start) positioning feed. Every SilverFast capture
+#: (8200i SE, 8300i SE at 150-7200 ppi, 8100 V2) writes ``0x7F`` before the
+#: reference feed and ``0xFF`` before this one. With ``0x7F`` the feed runs slower
+#: and lands about 270 steps short, so every frame started 0.5 mm high (#102).
+_FINAL_FEED_REG_AF = 0xFF
 
 #: Two 34-byte blobs the Windows driver writes to ``0x000FFF00`` and
 #: ``0x000FFF01`` before the register blast. Their meaning is unknown; they are
@@ -1475,6 +1490,7 @@ class Gl128:
         timeout_s: float = 30.0,
         require_motion: bool = True,
         use_slow_slope: bool = False,
+        final_positioning: bool = False,
     ) -> None:
         """Replay the captured fast-feed recipe (see MOTOR.md).
 
@@ -1487,6 +1503,9 @@ class Gl128:
 
         ``use_slow_slope``: pass ``True`` to upload ``SLOPE_TABLE_SLOW``
         instead of the fast ramp — see ``_upload_fast_slopes``.
+
+        ``final_positioning``: pass ``True`` for the feed to the scan-start line
+        so ``0xAF`` gets the vendor's second-feed value (``_FINAL_FEED_REG_AF``).
         """
         steps = max(0, int(steps))
         if steps == 0:
@@ -1498,6 +1517,8 @@ class Gl128:
         r = self.registers
         self.wait_motor_idle(f"before arming a {steps}-step feed")
         setup = dict(_FEED_SETUP_REGS)
+        if final_positioning:
+            setup[0xAF] = _FINAL_FEED_REG_AF
         self._write_many(setup)
         self.protocol.write_u24(r.REG_FEEDL, steps)
         self._write(r.REG_0x02, r.MTRPWR | r.FASTFED)  # 0x18
@@ -1584,7 +1605,18 @@ class Gl128:
         """
         deadline = time.monotonic() + timeout_s
         motion_seen = False
+        next_status = 0.0
         while time.monotonic() < deadline:
+            if motion_seen:
+                if self._read_feed_probe() == _FEED_PROBE_DONE:
+                    return
+                if time.monotonic() >= next_status:
+                    status = self.read_status_reliable()
+                    if status.is_feeding_finished and not status.is_motor_enabled:
+                        return
+                    next_status = time.monotonic() + HOME_POLL_S
+                time.sleep(_FEED_PROBE_POLL_S)
+                continue
             probe = self._read_feed_probe()
             status = self.read_status_reliable()
             if not require_motion:
@@ -1593,15 +1625,12 @@ class Gl128:
                 if status.is_feeding_finished and not status.is_motor_enabled:
                     return
             else:
-                if not motion_seen:
-                    # The probe in this iteration was read before the status that
-                    # shows motion, so only a later iteration's probe is current.
-                    motion_seen = status.is_motor_enabled
-                else:
-                    if probe == _FEED_PROBE_DONE:
-                        return
-                    if status.is_feeding_finished and not status.is_motor_enabled:
-                        return
+                # The probe in this iteration was read before the status that
+                # shows motion, so only a later iteration's probe is current.
+                motion_seen = status.is_motor_enabled
+                if motion_seen:
+                    next_status = time.monotonic() + HOME_POLL_S
+                    continue
             time.sleep(HOME_POLL_S)
         # Feed timed out — clear SCAN and drop motor power (not an AGOHOME park).
         self.stop_motor()
@@ -1660,10 +1689,17 @@ class Gl128:
         # (reference) feed, SLOPE_TABLE_FAST on the second (final
         # positioning) feed — see _upload_fast_slopes docstring.
         self._feed_capture(
-            first, timeout_s=timeout_s / 2, require_motion=True, use_slow_slope=True
+            first,
+            timeout_s=min(timeout_s / 2, _REFERENCE_FEED_TIMEOUT_S),
+            require_motion=True,
+            use_slow_slope=True,
         )
         self._feed_capture(
-            second, timeout_s=timeout_s / 2, require_motion=True, use_slow_slope=False
+            second,
+            timeout_s=timeout_s / 2,
+            require_motion=True,
+            use_slow_slope=False,
+            final_positioning=True,
         )
         end = self.read_status_reliable()
         logger.info("GL128 positioned for scan (status 0x%02x)", end.raw)
