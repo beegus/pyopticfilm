@@ -546,19 +546,6 @@ class Gl128Common:
         clk = int(self.pixel_clock_by_dpi.get(key, 0x02))
         return dummy, clk, clk
 
-    def white_origin_advance(self) -> tuple[int, int, tuple[int, ...]]:
-        """``(resolution, 0x1D low bits, motor table)`` of SilverFast's white strip.
-
-        Before every pass SilverFast runs a 128-line white strip with
-        ``0x02 = MTRPWR`` (no AGOHOME) and starts feed1 from where it stops
-        (#102). Its motor period is ``exposure × (low + 1) / 4`` at every PPI
-        and on every sibling. 8200i SE / 8300i SE captures run it at 1800 dpi
-        with low bits 0.
-        """
-        low = 0
-        period = int(self.exposure_lperiod) * (low + 1) // 4
-        return 1800, low, tuple(self.scan_motor_table(period))
-
     def channel_exposure_for(self, resolution: int, *, exposure: int | None = None) -> int:
         """Per-channel RAM exposure, ``exposure // oversample`` in the captures."""
         base = int(exposure if exposure is not None else self.exposure_lperiod)

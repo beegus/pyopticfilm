@@ -125,6 +125,16 @@ _FEED_START_TIMEOUT_S = 2.0
 #: the feed registers or the slope RAM again. A ramp loaded into a moving motor stalls it.
 _MOTOR_IDLE_TIMEOUT_S = 2.0
 _MOTOR_IDLE_POLL_S = 0.015
+#: The reference feed ends when the vendor probe reads ``0x04``, about 0.9 s after
+#: START on every GL128 sibling and PPI, long before its ``FEEDL`` runs out. A
+#: carriage that starts off home can miss that signal and run on to the end
+#: stop (8200i SE, #102), so give up well before ``FEEDL`` would finish.
+_REFERENCE_FEED_TIMEOUT_S = 2.5
+#: The carriage keeps moving after the probe reads ``0x04`` until ``MTRPWR`` drops,
+#: about 0.33 rows per ms at 1800 dpi on the 8200i SE, so the probe poll interval
+#: is position jitter. SilverFast polls every 15.6 ms (8200i SE, 8100 V2) or takes
+#: the interrupt endpoint (8300i SE).
+_FEED_PROBE_POLL_S = 0.002
 
 #: Register block written immediately before every captured fast feed
 #: (session 03 t≈8.98). Values are constants in the captures, not DPI-dependent.
@@ -158,6 +168,11 @@ _FEED_SETUP_REGS: dict[int, int] = {
     0xAE: 0x00,
     0xAF: 0x7F,
 }
+#: ``0xAF`` on the second (scan-start) positioning feed. Every SilverFast capture
+#: (8200i SE, 8300i SE at 150-7200 ppi, 8100 V2) writes ``0x7F`` before the
+#: reference feed and ``0xFF`` before this one. With ``0x7F`` the feed runs slower
+#: and lands about 270 steps short, so every frame started 0.5 mm high (#102).
+_FINAL_FEED_REG_AF = 0xFF
 
 #: Two 34-byte blobs the Windows driver writes to ``0x000FFF00`` and
 #: ``0x000FFF01`` before the register blast. Their meaning is unknown; they are
@@ -175,13 +190,6 @@ _REG_CLK_DRAM = 0x0B
 _DRAM_ENABLE = 0x08
 _REG_0x13 = 0x13
 _DRAM_INIT_0x13 = 0x0F
-#: ``0x1D`` low bits stretch the motor period per line (``× (low + 1)``).
-_REG_1D = 0x1D
-_REG_1D_LOW_MASK = 0x1F
-#: Undocumented pair SilverFast sets to 1 for its calibration strips on every
-#: GL128 sibling (Alignment_test, #102 capture, 04_color_7200).
-_REG_CALIB_A7 = 0xA7
-_REG_CALIB_A9 = 0xA9
 
 #: Image cancel / end-scan lamp writes on ``0x03`` (sessions 03 return-home,
 #: 08b/08c Cancel). Pre-clear pair, then clear ``SCAN`` to ``0x22``, then post.
@@ -1482,6 +1490,7 @@ class Gl128:
         timeout_s: float = 30.0,
         require_motion: bool = True,
         use_slow_slope: bool = False,
+        final_positioning: bool = False,
     ) -> None:
         """Replay the captured fast-feed recipe (see MOTOR.md).
 
@@ -1494,6 +1503,9 @@ class Gl128:
 
         ``use_slow_slope``: pass ``True`` to upload ``SLOPE_TABLE_SLOW``
         instead of the fast ramp — see ``_upload_fast_slopes``.
+
+        ``final_positioning``: pass ``True`` for the feed to the scan-start line
+        so ``0xAF`` gets the vendor's second-feed value (``_FINAL_FEED_REG_AF``).
         """
         steps = max(0, int(steps))
         if steps == 0:
@@ -1505,6 +1517,8 @@ class Gl128:
         r = self.registers
         self.wait_motor_idle(f"before arming a {steps}-step feed")
         setup = dict(_FEED_SETUP_REGS)
+        if final_positioning:
+            setup[0xAF] = _FINAL_FEED_REG_AF
         self._write_many(setup)
         self.protocol.write_u24(r.REG_FEEDL, steps)
         self._write(r.REG_0x02, r.MTRPWR | r.FASTFED)  # 0x18
@@ -1591,7 +1605,18 @@ class Gl128:
         """
         deadline = time.monotonic() + timeout_s
         motion_seen = False
+        next_status = 0.0
         while time.monotonic() < deadline:
+            if motion_seen:
+                if self._read_feed_probe() == _FEED_PROBE_DONE:
+                    return
+                if time.monotonic() >= next_status:
+                    status = self.read_status_reliable()
+                    if status.is_feeding_finished and not status.is_motor_enabled:
+                        return
+                    next_status = time.monotonic() + HOME_POLL_S
+                time.sleep(_FEED_PROBE_POLL_S)
+                continue
             probe = self._read_feed_probe()
             status = self.read_status_reliable()
             if not require_motion:
@@ -1600,15 +1625,12 @@ class Gl128:
                 if status.is_feeding_finished and not status.is_motor_enabled:
                     return
             else:
-                if not motion_seen:
-                    # The probe in this iteration was read before the status that
-                    # shows motion, so only a later iteration's probe is current.
-                    motion_seen = status.is_motor_enabled
-                else:
-                    if probe == _FEED_PROBE_DONE:
-                        return
-                    if status.is_feeding_finished and not status.is_motor_enabled:
-                        return
+                # The probe in this iteration was read before the status that
+                # shows motion, so only a later iteration's probe is current.
+                motion_seen = status.is_motor_enabled
+                if motion_seen:
+                    next_status = time.monotonic() + HOME_POLL_S
+                    continue
             time.sleep(HOME_POLL_S)
         # Feed timed out — clear SCAN and drop motor power (not an AGOHOME park).
         self.stop_motor()
@@ -1629,106 +1651,15 @@ class Gl128:
         self._require_motor_enabled()
         self._feed_capture(steps, timeout_s=timeout_s)
 
-    def advance_white_origin(self, *, timeout_s: float = 30.0) -> None:
-        """Move the carriage off home the way SilverFast's white strip does.
-
-        SilverFast runs a 128-line white strip with ``0x02 = MTRPWR`` (no
-        AGOHOME) before every pass, then counts feed1/feed2 from where the
-        strip stopped. Feeding from home instead put every pyopticfilm frame
-        0.45 mm too high on the 8200i SE (#102). This replays that strip's
-        motor setup from :meth:`~Gl128Common.white_origin_advance` and
-        discards the data; the shading measurement itself still parks home.
-        """
-        self._require_motor_enabled()
-        r = self.registers
-        resolution, reg_1d_low, motor_table = self.model.white_origin_advance()
-        start, end, dpiset = self._shading_window(
-            pixels=shading_width_for_resolution(resolution),
-            resolution=resolution,
-            strpixel=None,
-            endpixel=None,
-            dpiset=None,
-        )
-        n = shading_acquire_width(
-            strpixel=start,
-            endpixel=end,
-            dpiset=dpiset,
-            optical_resolution=self.model.optical_resolution,
-        )
-        size = n * SHADING_LINES * 6
-        dummy, clk_a, clk_b = self.model.shading_strip_clocks(resolution, dvdset=True)
-
-        self.wait_motor_idle("before the white-strip advance")
-        self._apply_stationary_scan_regs(include_memory_layout=False)
-        table = _u16_table_bytes(motor_table)
-        for addr in (r.AHB_CHANNEL_R, r.AHB_CHANNEL_G, r.AHB_CHANNEL_B):
-            self.protocol.write_ahb(addr, table)
-        self._write(0x2B, int(dummy))
-        self._write(0xA5, int(clk_a))
-        self._write(0xAB, int(clk_b))
-        reg1d = self._reg_cache.get(_REG_1D, self.model.init_regs.get(_REG_1D, 0x80))
-        self._write(_REG_1D, (int(reg1d) & ~_REG_1D_LOW_MASK) | int(reg_1d_low))
-        self.protocol.write_u24(r.REG_LINCNT, SHADING_LINES)
-        self.protocol.write_u16(r.REG_DPISET, dpiset)
-        self.protocol.write_u24(r.REG_STRPIXEL, start)
-        self.protocol.write_u24(r.REG_ENDPIXEL, end)
-        self.protocol.write_u24(r.REG_FEEDL, 1)
-        self.protocol.write_u24(r.REG_LPERIOD, int(self.model.line_period_for(resolution)))
-        self.protocol.write_u24(r.REG_EXPOSURE, int(self.model.exposure_lperiod))
-        self._write(r.REG_DEPTH_A, r.DEPTH16_A)
-        self._write(r.REG_DEPTH_B, r.DEPTH16_B)
-        self._write(0x3B, 0x00)
-        self._write(0xA3, 0x00)
-        # SilverFast holds these at 1 through calibration and clears them before feed1.
-        self._write(_REG_CALIB_A7, 0x01)
-        self._write(_REG_CALIB_A9, 0x01)
-        self._write(r.REG_0x02, r.MTRPWR)
-        self._write(r.REG_CLRCNT, r.CLRCNT_ALL)
-        reg01 = (self._reg_cache.get(r.REG_0x01, 0x22) | r.SHDAREA | r.SCAN) & ~r.DVDSET
-        self._write(r.REG_0x01, reg01)
-        self._write(r.REG_START, r.START_GO)
-
-        got = 0
-        try:
-            self._wait_shading_data_ready(timeout_s, where="White-strip advance", motorized=True)
-            self.protocol.bulk_read_begin(size, index=r.BULK_INDEX_RAM, addr=r.AHB_CHANNEL_R)
-            while got < size:
-                chunk = self.protocol.bulk_read_chunk(min(65536, size - got))
-                if not chunk:
-                    break
-                got += len(chunk)
-        finally:
-            self._update_bits(r.REG_0x01, clear_bits=r.SCAN)
-            self._write(r.REG_0x02, 0x00)
-            self._write(_REG_CALIB_A7, 0x00)
-            self._write(_REG_CALIB_A9, 0x00)
-        if got < size:
-            raise ScanError(f"White-strip advance short read: {got} of {size} bytes")
-        after = self.wait_motor_idle("after the white-strip advance")
-        if after.is_at_home:
-            raise AsicError(
-                "GL128 still reads at-home after the white-strip advance; the "
-                "carriage did not move, so the frame would start too high."
-            )
-        logger.info(
-            "GL128 white-strip advance done (%d dpi, %d lines, 0x1D low=%d, period=%d, status 0x%02x)",
-            resolution,
-            SHADING_LINES,
-            reg_1d_low,
-            motor_table[-1],
-            after.raw,
-        )
-
     def position_for_full_frame_scan(
         self,
         *,
         scan_steps: int | None = None,
         timeout_s: float = 60.0,
     ) -> None:
-        """From home: white-strip advance, feed to reference, then to the scan-start line.
+        """From home: feed to reference, then to the scan-start line.
 
-        Replays SilverFast's motorized white strip (:meth:`advance_white_origin`),
-        then ``28292`` then ``scan_steps`` (default session-04 full-frame
+        Replays ``28292`` then ``scan_steps`` (default session-04 full-frame
         ``13704``; crop-dependent values from session 09). Requires home.
         """
         self._require_motor_enabled()
@@ -1746,7 +1677,6 @@ class Gl128:
                 "then retry from home."
             )
         self.warm_prepare()
-        self.advance_white_origin(timeout_s=timeout_s / 2)
         second = int(self.model.feed_to_scan_steps) if scan_steps is None else int(scan_steps)
         first = int(self.model.feed_to_reference_steps)
         logger.info(
@@ -1759,10 +1689,17 @@ class Gl128:
         # (reference) feed, SLOPE_TABLE_FAST on the second (final
         # positioning) feed — see _upload_fast_slopes docstring.
         self._feed_capture(
-            first, timeout_s=timeout_s / 2, require_motion=True, use_slow_slope=True
+            first,
+            timeout_s=min(timeout_s / 2, _REFERENCE_FEED_TIMEOUT_S),
+            require_motion=True,
+            use_slow_slope=True,
         )
         self._feed_capture(
-            second, timeout_s=timeout_s / 2, require_motion=True, use_slow_slope=False
+            second,
+            timeout_s=timeout_s / 2,
+            require_motion=True,
+            use_slow_slope=False,
+            final_positioning=True,
         )
         end = self.read_status_reliable()
         logger.info("GL128 positioned for scan (status 0x%02x)", end.raw)

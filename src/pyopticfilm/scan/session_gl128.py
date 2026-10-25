@@ -371,10 +371,8 @@ class Gl128ScanSession(ScanSession):
             exposure_table(channel_exp)
 
         # Capture-constant feeds from home — never geometry.starty (that was the
-        # grinding bug). Calibration passes stay put (no motor). Positioning
-        # starts with SilverFast's white-strip advance, so feed1 counts from the
-        # same origin as SilverFast's (#102). It is skipped while motor moves
-        # are gated so configure unit tests stay safe.
+        # grinding bug). Calibration passes stay put (no motor). Positioning is
+        # skipped while motor moves are gated so configure unit tests stay safe.
         if not shading and getattr(self.asic, "_motor_moves_enabled", False):
             scan_steps = image_feed2_steps(
                 model,
