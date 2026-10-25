@@ -25,9 +25,9 @@ from __future__ import annotations
 import time
 from typing import Literal
 
+from pyopticfilm.asic.buttons import BUTTON_IDS, Button
 from pyopticfilm.asic.registers import Gl128Registers
 from pyopticfilm.asic.status import ScannerStatus
-from pyopticfilm.asic.buttons import Button, BUTTON_IDS
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.protocol import Gl128Model
 from pyopticfilm.device.tables_8200i_se import exposure_table
