@@ -9,34 +9,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Native NumPy pass registration** (`pyopticfilm.registration`): hierarchical windowed phase correlation with Guizar-Sicairos subpixel refinement on the refine ROI, mode-specific planes (Multi-Pass luminance, Multi-Exposure clip-aware, RGB↔IR gradient maps), integer-exact and separable bilinear/Keys-cubic resampling, and Multi-Pass row-banded Y profiles. ME short/long, Multi-Pass stacking, and IR→RGB alignment use this engine only. `tools/audit_me_bracket --align` and `tools/bench_registration` report accuracy, apply MP/s, and staged timings.
-
-### Changed
-
-- **Registration estimate** builds coarse planes before gradients/FFT (block-mean first for RGB↔IR), refines a 512² integer-sliced center ROI (no full-frame warp during estimate), uses float32 FFTs, and keeps regional 3×3 checks off by default. Fractional apply uses slice-copy bilinear (no full `mgrid`). Typical estimate on 1800/3600 dpi RGB↔IR drops from multi-second to a few hundred milliseconds.
+- **Scanner buttons (GL128)** ([#107](https://github.com/jboneng/pyopticfilm/pull/107)): `Scanner.button_state(timeout_ms=...)` reads the USB interrupt endpoint (`0x83`) once and returns the `pyopticfilm.asic.buttons.Button` values pressed since the last read: `QUICK_SCAN` (`0x08`) and `INTELLI_SCAN` (`0x40`). The scanner holds a press until it is read, so polling every few hundred milliseconds catches every press, one per poll. Tested on the 8300i SE and 8200i SE; the 8100 V2 is untested. Other ASICs don't have the method yet (see Notes for integrators).
+- **`examples/buttons.py`**: polls the buttons and prints each press with the action a host would map it to (preview or full scan), treating an idle poll as no press. The README lists both examples and has a short buttons section.
 
 ### Fixed
 
 - **RGB↔IR residual on pre-aligned pairs**: coarse still locks with gradients for multimodal shifts; when that coarse shift is already small, a same-scale structural-luma re-estimate is merged per-axis with the gradient seed (agree → luma; disagree → smaller |shift|) so a competing ~1–2 px X/Y lobe cannot win. Full-res luma ROI refine is only kept as a ≤0.25 px polish around that seed; RGB↔IR never integer-snaps. Larger shifts refine on integer-sliced luma ROIs (remap pre-shift, multi-ROI response-filtered median near the seed).
 - **Registration remap parity**: `warp_shift` / linear / cubic / integer match banded `warp_row_shifts` (`dst = src(x - dx, y - dy)`), so Translation `apply_transform` actually aligns. ROI integer pre-shift uses the same convention. Guizar subpixel refine matches 5×5 centroid sign (ME/MP); RGB↔IR refine stays phase-only centroid.
-
-### Removed
-
-- **OpenCV entirely**: `opencv-python-headless` is gone from dependency groups; `tools/audit_me_bracket --engine={opencv,both}` and `pass_align.opencv_align_available` are removed. Pass registration and audit tools are NumPy-only.
-
-### Fixed
-
 - **GL128 frames were 24 px narrower than SilverFast at 1800 dpi and lost holder/film on the left** (8200i SE, 8100 V2, 8300i SE) ([#102](https://github.com/jboneng/pyopticfilm/issues/102)): pyopticfilm shifted the image window by 96 native clocks (STR/END 338/10706 instead of SilverFast's 242/10610) and trimmed up to 24 dark columns from the USB ENDPIXEL side, which is the image left after mirroring. The trim was added for a near-zero band that pyopticfilm, not SilverFast, produced at that edge. SilverFast's raw USB lines from the 8200i SE and 8300i SE have no such band, and a live 8200i SE scan with the current driver now shows the holder edge there instead. The trim was cutting real holder and film columns. All three models now program SilverFast's window and keep every column: 2592 px at 1800 dpi for a full frame, the same as SilverFast.
-- **GL128 frames started about 0.5 mm higher than SilverFast's and moved between scans** (8200i SE, 8100 V2, 8300i SE) ([#102](https://github.com/jboneng/pyopticfilm/issues/102)). The second positioning feed reused the first feed's `0xAF = 0x7F`. Every SilverFast capture, on all three models and at every PPI from 150 to 7200, writes `0xFF` before that feed. With `0x7F` the feed ran slower and stopped about 270 steps short, so at 1800 ppi on the 8200i SE the frame began 34 rows higher than SilverFast's. pyopticfilm also checked for the end of the first feed only every 55 ms while the carriage kept moving, so the frame moved by up to 15 rows from scan to scan. It now checks every 2 ms. On the 8200i SE the frame now lands within 1 to 2 rows of SilverFast's in every scan.
+- **GL128 frames started about 0.5 mm higher than SilverFast's and moved between scans** (8200i SE, 8100 V2, 8300i SE) ([#102](https://github.com/jboneng/pyopticfilm/issues/102)). The second positioning feed reused the first feed's `0xAF = 0x7F`. Every SilverFast capture, on all three models and at every PPI from 150 to 7200, writes `0xFF` before that feed. With `0x7F` the feed ran slower and stopped about 270 steps short, so at 1800 ppi on the 8200i SE the frame began 34 rows higher than SilverFast's. pyopticfilm also checked for the end of the first feed only every 55 ms while the carriage kept moving, so the frame moved by up to 15 rows from scan to scan. It now checks every 2 ms. On the 8200i SE the frame now lands within 1 to 2 rows of SilverFast's in every scan. `docs/register-reference.md` now lists `0xAF`'s feed values.
 - **GL128 carriage could run into the end stop during positioning** (8200i SE, 8100 V2, 8300i SE). The first positioning feed is not a fixed distance: it stops when the scanner signals the reference point (vendor probe `0x21 = 0x04`), about 0.9 s after it starts on every model and PPI. If the carriage started off home and missed that signal, pyopticfilm waited up to 30 s while the feed ran its full step count, driving the carriage into the end of its travel and dropping the scanner off USB. That feed now gives up after 2.5 s, cuts motor power and raises `MotorTimeoutError`.
 
 ### Changed
 
 - **GL128 default full frames are exactly one inch tall, like SilverFast: 1800 rows at 1800 ppi** instead of 1801 ([#102](https://github.com/jboneng/pyopticfilm/issues/102)). SilverFast reads one inch plus the colour line shift plus one row, and returns the inch. pyopticfilm returned whatever was left after the line shift, so from 1800 ppi upwards the frame came out 1 to 5 rows too tall (for example 1801 at 1800 ppi and 3602 at 3600 ppi). On the 8200i SE, 8100 V2 and 8300i SE, a full-frame scan with no `area` is now cut to the inch after line shift and unstagger. Scanner registers and travel are unchanged. Crops and Scan Lab's Full window keep their current height.
 - **Scan Lab prescan background** is light grey instead of near-black, so dark film-holder edges stand out against the canvas. The other image tabs keep the dark background.
+- **Registration estimate** builds coarse planes before gradients/FFT (block-mean first for RGB↔IR), refines a 512² integer-sliced center ROI (no full-frame warp during estimate), uses float32 FFTs, and keeps regional 3×3 checks off by default. Fractional apply uses slice-copy bilinear (no full `mgrid`). Typical estimate on 1800/3600 dpi RGB↔IR drops from multi-second to a few hundred milliseconds.
+- **`uv.lock` is committed**, so `uv sync` installs the same dependency versions on every checkout.
+
+### Removed
+
+- **OpenCV entirely**: `opencv-python-headless` is gone from dependency groups; `tools/audit_me_bracket --engine={opencv,both}` and `pass_align.opencv_align_available` are removed. Pass registration and audit tools are NumPy-only.
 
 ### Notes for integrators
 
 - GL128 images are wider by `96 × dpi / 7200` px (16 / 24 / 48 at 1200 / 1800 / 3600 dpi) and show slightly more of the frame on the left. Colour shading cached for the old window is re-measured automatically on the first scan, because the cache is keyed by window start and width.
+- GL128 frames start about 0.5 mm further into the scan than in 1.3.7 (34 rows at 1800 ppi on the 8200i SE), where SilverFast starts them. Saved `area` crops move with the frame.
+- `Scanner.button_state()` raises on an idle poll in this release: `UsbError` when the read times out with no press (what the 8200i SE does) and `IndexError` if the scanner answers with an empty packet. Treat both as "no button", as `examples/buttons.py` does. On GL845, GL843 and GL842 scanners the method raises `AttributeError`, so check `hasattr(scanner.asic, "button_state")` first. Always pass `timeout_ms`: `None` falls back to the device's general USB timeout. Pause polling while a scan runs, and start scans from the host's normal scan path rather than the polling thread.
+
+### Contributors
+
+- [@theaino](https://github.com/theaino) for physical-button support on the 8300i SE ([#107](https://github.com/jboneng/pyopticfilm/pull/107)): finding that the vendor driver polls interrupt endpoint `0x83` and decoding the QuickScan / IntelliScan bytes. Also for reporting the GL128 frame size and position mismatch against SilverFast ([#102](https://github.com/jboneng/pyopticfilm/issues/102)) with side-by-side SilverFast scans, debug-script runs and a SilverFast USB capture, and for testing [#104](https://github.com/jboneng/pyopticfilm/pull/104) and [#106](https://github.com/jboneng/pyopticfilm/pull/106) on the 8300i SE.
+- [@TobbyTravel](https://github.com/TobbyTravel) for running the #102 frame-position script on the 8100 V2 against `main` and an early [#106](https://github.com/jboneng/pyopticfilm/pull/106) build. It showed that copying SilverFast's white-strip carriage move did not move the frame, and that change was dropped from #106.
 
 ## [1.3.7] - 2026-10-23
 

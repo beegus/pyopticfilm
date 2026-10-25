@@ -870,6 +870,19 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         citations=_c("registers.py Gl128Registers"),
     ),
     RegisterEntry(
+        addr="0xAF",
+        name="REG_DEPTH_B — positioning-feed value",
+        asic=AsicFamily.GL128,
+        scope=(SCOPE_ALL_GL128,),
+        meaning="Also written in the setup block before each positioning feed: 0x7F before the reference feed (feed1) and 0xFF before the scan-start feed (feed2), in every SilverFast capture checked. With 0x7F on feed2 the feed ran slower (1.16 s instead of 0.90 s) and stopped about 270 steps short, so the frame started 34 rows (about 0.5 mm) high at 1800 ppi on the 8200i SE. Why this register changes the feed is not known.",
+        confidence=Confidence.CONFIRMED,
+        citations=_c(
+            "gl128.py _FEED_SETUP_REGS (0xAF=0x7F), _FINAL_FEED_REG_AF (0xFF)",
+            "SilverFast captures: 8200i SE 1800 ppi (2 sessions), 8300i SE 150-7200 ppi, 8100 V2 1800 ppi; 8200i SE hardware A/B (#102, PR #106)",
+        ),
+        safety_note="Keep 0x7F on feed1 and 0xFF on feed2. Using 0x7F on feed2 moves every GL128 frame about 270 feed steps higher.",
+    ),
+    RegisterEntry(
         addr="0x101",
         name="REG_STATUS",
         asic=AsicFamily.GL128,
@@ -894,13 +907,20 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         asic=AsicFamily.GL128,
         scope=(SCOPE_ALL_GL128,),
         meaning=(
-            "AHB_CHANNEL_R/G/B (per-channel RAM exposure), AHB_SLOPE_SCAN/"
+            "AHB_CHANNEL_R/G/B (per-channel RAM exposure; 256 16-bit words that "
+            "are the scan motor's step periods: flat on the 8200i SE and 8100 V2, "
+            "SilverFast's acceleration ramp clamped at REG_EXPOSURE × ((0x1D & 0x1F) + 1) "
+            "× asic_dpi / 14400 on the 8300i SE since 1.3.7), AHB_SLOPE_SCAN/"
             "AHB_SLOPE_FAST (motor ramp tables), AHB_SHADING (shading "
             "correction table) — bulk-upload memory windows, distinct from "
             "the ordinary 1-byte register address space."
         ),
         confidence=Confidence.CONFIRMED,
-        citations=_c("registers.py Gl128Registers", "gl128.py upload_tables, upload_shading_table"),
+        citations=_c(
+            "registers.py Gl128Registers",
+            "gl128.py upload_tables, upload_shading_table",
+            "Gl128Model.scan_motor_table",
+        ),
     ),
     RegisterEntry(
         addr="0x000FFF00/0x000FFF01",

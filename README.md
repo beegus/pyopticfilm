@@ -45,8 +45,10 @@ Other OpticFilm models **enumerate and open**: you can read status, turn the lam
 - GL128 dark/white shading calibration with on-disk cache (`~/.cache/pyopticfilm/calib_v2.json`)
 - GL128 ASIC shading path (AFE codes + shading blob) aligned with SilverFast capture order
 - Left–right orientation corrected in `ImagePipeline.assemble()` for `mirror_x` models
+- Pass registration (Multi-Exposure, Multi-Pass, IR→RGB) in pure NumPy; no OpenCV dependency
 - 16-bit RGB `numpy` output; optional TIFF export via `tifffile`
 - Progress and cancel hooks for long scans
+- Read the scanner's QuickScan / IntelliScan buttons on GL128 models (`scanner.button_state()`)
 
 Not implemented or out of scope here: iSRD infrared dust removal, SilverFast-style UI, or shipping a desktop app—applications own post-processing.
 
@@ -111,6 +113,9 @@ with Scanner.open() as scanner:
 
     image.save_tiff("frame.tif")  # requires tifffile
 ```
+
+Runnable examples: [examples/scan.py](examples/scan.py) (interactive scan to TIFF)
+and [examples/buttons.py](examples/buttons.py) (scanner buttons).
 
 For the 7600i v1, explicitly use 1440, 3600 or 7200 dpi for colour; IR supports 3600 or 7200 dpi.
 The shared `scan()` default of 1800 dpi is unsupported on this model. See the
@@ -240,6 +245,23 @@ image = scanner.scan(
 )
 ```
 
+Scanner buttons (GL128; tested on the 8200i SE and 8300i SE). Each
+call reads the USB interrupt endpoint once and returns the buttons pressed since
+the last read, so polling every few hundred milliseconds misses nothing. For now
+an idle poll raises instead of returning an empty set: a timeout surfaces as
+`UsbError` and an empty read as `IndexError`. Other ASICs have no `button_state`.
+Poll from one thread, pause polling while a scan runs, and start scans from your
+normal scan path rather than from the polling thread:
+
+```python
+from pyopticfilm.asic.buttons import Button
+
+pressed = scanner.button_state(timeout_ms=250)  # e.g. {Button.QUICK_SCAN}
+```
+
+[examples/buttons.py](examples/buttons.py) is a complete polling loop that handles
+the idle case.
+
 List devices without opening:
 
 ```python
@@ -258,6 +280,7 @@ for info in find_devices():
 | `scanner.scan(...)` | Run a full scan → `ScanImage` |
 | `scanner.calibrate(...)` | Run shading; updates cache (unsupported on 7600i v1) |
 | `scanner.status()` | Read scanner status flags |
+| `scanner.button_state(timeout_ms=...)` | Poll the QuickScan / IntelliScan buttons (GL128) |
 | `scanner.home()` / `scanner.park()` | Motor positioning |
 | `scanner.lamp_on()` / `scanner.lamp_off()` | Lamp control (allowed on experimental models) |
 | `scanner.advanced` | Low-level register read/write (bring-up) |
