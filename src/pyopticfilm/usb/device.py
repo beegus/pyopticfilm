@@ -527,6 +527,8 @@ class UsbDeviceHandle:
                 self._ep_intr_in.wMaxPacketSize,
                 timeout=timeout,
             )
+        except usb_core.USBTimeoutError:
+            return b""
         except usb_core.USBError as exc:
             raise _map_usb_exception(exc) from exc
         return bytes(data)

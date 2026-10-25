@@ -1303,12 +1303,18 @@ class Gl128:
     # --- buttons --------------------------------------------------------
 
     def button_state(self, timeout_ms: int = 0) -> set[Button]:
-        button_byte = self.protocol.read_intr(timeout_ms=timeout_ms)[0]
         buttons = set()
+
+        data = self.protocol.read_intr(timeout_ms=timeout_ms)
+        if len(data) == 0:
+            return buttons
+        button_byte = data[0]
+
         for id, button in BUTTON_IDS:
             if button_byte & id == 0:
                 continue
             buttons.add(button)
+
         return buttons
 
 
