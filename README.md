@@ -247,20 +247,19 @@ image = scanner.scan(
 
 Scanner buttons (GL128; tested on the 8200i SE and 8300i SE). Each
 call reads the USB interrupt endpoint once and returns the buttons pressed since
-the last read, so polling every few hundred milliseconds misses nothing. For now
-an idle poll raises instead of returning an empty set: a timeout surfaces as
-`UsbError` and an empty read as `IndexError`. Other ASICs have no `button_state`.
-Poll from one thread, pause polling while a scan runs, and start scans from your
-normal scan path rather than from the polling thread:
+the last read, so polling every few hundred milliseconds misses nothing. With no
+press it returns an empty set after `timeout_ms`; a real USB failure still raises
+`UsbError`. Other ASICs have no `button_state`. Poll from one thread, pause polling
+while a scan runs, and start scans from your normal scan path rather than from the
+polling thread:
 
 ```python
 from pyopticfilm.asic.buttons import Button
 
-pressed = scanner.button_state(timeout_ms=250)  # e.g. {Button.QUICK_SCAN}
+pressed = scanner.button_state(timeout_ms=250)  # set() or e.g. {Button.QUICK_SCAN}
 ```
 
-[examples/buttons.py](examples/buttons.py) is a complete polling loop that handles
-the idle case.
+[examples/buttons.py](examples/buttons.py) is a complete polling loop.
 
 List devices without opening:
 
