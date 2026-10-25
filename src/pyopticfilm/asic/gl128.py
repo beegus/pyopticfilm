@@ -25,6 +25,7 @@ from __future__ import annotations
 import time
 from typing import Literal
 
+from pyopticfilm.asic.buttons import BUTTON_IDS, Button
 from pyopticfilm.asic.registers import Gl128Registers
 from pyopticfilm.asic.status import ScannerStatus
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
@@ -1298,6 +1299,18 @@ class Gl128:
         self.usb_planar_rgb = False
         self._initialized = True
         logger.info("GL128 initialised (%s)", self.model.model)
+
+    # --- buttons --------------------------------------------------------
+
+    def button_state(self, timeout_ms: int = 0) -> set[Button]:
+        button_byte = self.protocol.read_intr(timeout_ms=timeout_ms)[0]
+        buttons = set()
+        for id, button in BUTTON_IDS:
+            if button_byte & id == 0:
+                continue
+            buttons.add(button)
+        return buttons
+
 
     # --- lamp / infrared ------------------------------------------------
 
