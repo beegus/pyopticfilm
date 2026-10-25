@@ -180,6 +180,9 @@ class Scanner:
         self._ensure_open()
         return self._asic.read_status_reliable()
 
+    def button_state(self, timeout_ms: int | None = None):
+        return self._asic.button_state(timeout_ms=timeout_ms)
+
     def warmup(self, *, home: bool = True, lamp: bool = True) -> None:
         """ASIC boot, frontend init, optional home + lamp on."""
         self._ensure_scan_ready()

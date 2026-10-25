@@ -391,6 +391,12 @@ class UsbDeviceHandle:
                 == usb_util.ENDPOINT_OUT
                 and usb_util.endpoint_type(e.bmAttributes) == usb_util.ENDPOINT_TYPE_BULK,
             )
+            self._ep_intr_in = usb_util.find_descriptor(
+                intf,
+                custom_match=lambda e: usb_util.endpoint_direction(e.bEndpointAddress)
+                == usb_util.ENDPOINT_IN
+                and usb_util.endpoint_type(e.bmAttributes) == usb_util.ENDPOINT_TYPE_INTR
+            )
 
             self._dev = dev
             self._claimed = True
@@ -399,11 +405,12 @@ class UsbDeviceHandle:
                 self.info, serial_number=_read_serial_number(dev, usb_util)
             )
             logger.info(
-                "Opened %s (iface=%s ep_in=%s ep_out=%s serial=%r)",
+                "Opened %s (iface=%s ep_in=%s ep_out=%s ep_intr_in=%s serial=%r)",
                 self.info.device_id,
                 self._interface,
                 None if self._ep_in is None else hex(self._ep_in.bEndpointAddress),
                 None if self._ep_out is None else hex(self._ep_out.bEndpointAddress),
+                None if self._ep_intr_in is None else hex(self._ep_intr_in.bEndpointAddress),
                 self.info.serial_number,
             )
         except (DriverBindingError, DeviceNotFoundError, UnsupportedDeviceError):
@@ -453,6 +460,7 @@ class UsbDeviceHandle:
             self._claimed = False
             self._ep_in = None
             self._ep_out = None
+            self._ep_intr_in = None
             self._needs_usb_reset = False
             logger.debug("Closed %s", self.info.device_id)
 
@@ -505,6 +513,23 @@ class UsbDeviceHandle:
         if isinstance(data_or_length, int):
             return bytes(result)
         return b""
+
+    def read_intr(self, timeout_ms: int | None = None) -> bytes:
+        """Read from the interrupt IN endpoint."""
+        self._ensure_open()
+        if self._ep_intr_in is None:
+            raise UsbError("Device has no bulk IN endpoint.")
+        usb_core, _usb_util = _require_usb()
+        timeout = self.timeout_ms if timeout_ms is None else timeout_ms
+        try:
+            data = self._dev.read(
+                self._ep_intr_in.bEndpointAddress,
+                self._ep_intr_in.wMaxPacketSize,
+                timeout=timeout,
+            )
+        except usb_core.USBError as exc:
+            raise _map_usb_exception(exc) from exc
+        return bytes(data)
 
     def bulk_read(self, size: int, *, timeout_ms: int | None = None) -> bytes:
         """Read up to ``size`` bytes from the bulk IN endpoint."""

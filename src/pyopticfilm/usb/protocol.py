@@ -255,6 +255,9 @@ class GenesysUsbProtocol:
         self.write_register(address + 1, (value >> 8) & 0xFF)
         self.write_register(address + 2, value & 0xFF)
 
+    def read_intr(self, timeout_ms: int | None = None) -> bytes:
+        return self._transport.read_intr(timeout_ms=timeout_ms)
+
     @staticmethod
     def _bulk_preamble(addr: int, size: int) -> bytes:
         """8-byte little-endian ``(address, size)`` header used by every bulk op."""
