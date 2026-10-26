@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.8] - 2026-10-26
+
 ### Added
 
 - **Native NumPy pass registration** (`pyopticfilm.registration`): hierarchical windowed phase correlation with Guizar-Sicairos subpixel refinement on the refine ROI, mode-specific planes (Multi-Pass luminance, Multi-Exposure clip-aware, RGB↔IR gradient maps), integer-exact and separable bilinear/Keys-cubic resampling, and Multi-Pass row-banded Y profiles. ME short/long, Multi-Pass stacking, and IR→RGB alignment use this engine only. `tools/audit_me_bracket --align` and `tools/bench_registration` report accuracy, apply MP/s, and staged timings.
