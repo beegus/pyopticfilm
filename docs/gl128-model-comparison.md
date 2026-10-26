@@ -135,7 +135,7 @@ and bit-depth cannot be compared to the SilverFast eleven-rung ladder.
 | RAM read preamble | `wIndex=0x00` | same | same | same |
 | Status register | `0x101` | `0x101` | `0x101` | same |
 | AFE path | `0x51` + `0x5D`/`0x5E` | same | same | same |
-| Vendor probe `wIndex=0x21` in scan traffic | present (60 reads in session 04, with `0x20`/`0x18`) | unknown (pyopticfilm polls `0x21`; SE vendor use not separately checked) | present | inconclusive |
+| Vendor probe `wIndex=0x21` in scan traffic | present, reference feed only (about 60 reads per feed until `0x04`) | present, reference feed only (same pattern) | present | same (V2/SE) |
 | Vendor probe `wIndex=0x20` | present (263 reads in session 04) | unknown | unknown | inconclusive |
 | `CLRCNT` before image (`0x0D`) | `0x07` | `0x07` | unknown | inconclusive |
 | `START` launch (`0x0F`) | `0x01` | `0x01` | `0x01` | same |
@@ -146,9 +146,12 @@ and bit-depth cannot be compared to the SilverFast eleven-rung ladder.
 Control, bulk-image, AHB, status `0x101`, and AFE indexing are the same
 Genesys GL124/GL128 framing on all three. 135i is the only model whose
 captures show the host actually consuming interrupt endpoint `0x83` for
-carrier insert/eject. V2 scan captures do include `wIndex=0x21` probes
-alongside the more frequent `0x20`/`0x18` polls; that does not by itself
-prove the SE vendor driver uses `0x21`.
+carrier insert/eject. On the V2 and SE, SilverFast polls `wIndex=0x21`
+only on the first (reference) positioning feed and stops that feed when it
+reads `0x04`. On the second (scan-start) feed it never reads `0x21`: it
+waits on status `0x101` until `FEEDFSH` is set and the motor is off. The
+8300i SE never reads `0x21`; its reference feed ends on interrupt `0x83`
+returning `0x04` (see `docs/register-reference.md`, `0x21`).
 
 ---
 
@@ -841,10 +844,6 @@ Closed by hardware measurement (Scan Lab TIFFs, 2026-10-16): the 7200 dpi
 leaves correct); 1440/2400 show 0.8/1.35 rows. Fixed by host unstagger
 (`(4, 0)` @7200, `(1, 0)` @1440/2400, pre-mirror) plus rounded `ld_shift` as
 on the SE leaves; 1200/3600 flat. Full-frame 7200 loses 4 output rows.
-
-### 8200i SE
-
-- Whether the real vendor driver polls `wIndex=0x21` (pyopticfilm does)
 
 This document does not implement a 135i driver and does not change SE/V2
 constants. The 8300i SE leaf is in-tree with `scan_ready=True`; §10 is the

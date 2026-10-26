@@ -359,41 +359,41 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         addr="0x21",
         name="Feed-probe index (vendor REQUEST_REGISTER probe, not an ASIC register address)",
         asic=AsicFamily.GL128,
-        scope=(SCOPE_8100_V2,),
+        scope=(SCOPE_8100_V2, SCOPE_8200I_SE),
         meaning=(
-            "pyopticfilm's own _FEED_PROBE_INDEX, polled during fast feeds "
-            "until it returns 0x04 (_FEED_PROBE_DONE). On the 8100 V2, the "
-            "real vendor driver never queries wIndex=0x21 in any capture "
-            "with a real scan — it polls wIndex=0x20 (constant 0x55) and "
-            "0x18 instead, neither of which pyopticfilm currently uses. The "
-            "absence of 0x21 traffic in every real-scan capture is the "
-            "confirmed observation; what the vendor driver's 0x20/0x18 "
-            "probes actually mean was deliberately not guessed at."
+            "pyopticfilm's _FEED_PROBE_INDEX. SilverFast reads it on the first "
+            "(reference) positioning feed only: about every 15.7 ms, 0x00 until "
+            "0x04 about 0.9 s after START, then it writes 0x02=0x08 at once. On "
+            "the second (scan-start) feed it never reads 0x21; it polls status "
+            "0x101 until FEEDFSH is set and MOTORENB clears (d5 -> f5 -> f4, "
+            "about 1.2 s after START), alongside a few wIndex=0x20 (0x55) and "
+            "0x18 (0x02) reads. Same on the 8100 V2 and 8200i SE. The 8300i SE "
+            "never reads 0x21: its reference feed ends on interrupt endpoint "
+            "0x83 returning 0x04, and its second feed uses 0x101 like the "
+            "others. pyopticfilm matches this for the second feed since #111 "
+            "(ignore_probe) and still polls 0x21 on the reference feed on all "
+            "three models."
         ),
         confidence=Confidence.CONFIRMED,
         citations=_c(
-            "gl128.py:117 (_FEED_PROBE_INDEX=0x21), :1520-1531 (_read_feed_probe/_feed_done_indicated)",
-            "Independent capture analysis (multiple real 8100 V2 USB captures with active scans): "
-            "wIndex=0x21 never appears; wIndex=0x20 (const 0x55) dominates, wIndex=0x18 (2 or 18) less often",
+            "gl128.py:118 (_FEED_PROBE_INDEX=0x21), _wait_feed_probe_done(ignore_probe), position_for_full_frame_scan",
+            "SilverFast captures, every positioning feed between START (0x0f=1) and the next 0x02 write: "
+            "8100 V2 03_prescan, 04_color_7200 (first 15 s), 06_ppi_ladder (13 feed pairs); "
+            "8200i SE 04_color_1800, 13_600ppi_color, 13_1800ppi_color (5 pairs); "
+            "8300i SE 2026-10-21 ppi ladder 300 and 1800 ppi (3 pairs). No exceptions.",
+            "jboneng/pyopticfilm#111",
         ),
         safety_note=(
-            "A per-model 'skip this probe entirely' override for V2 was "
-            "tried and independently confirmed hazardous: disabling it "
-            "caused real hardware faults on repeated trials, even after an "
-            "unrelated motor-ramp bug (see 0x3D-0x3F's safety_note) was "
-            "fixed. Do not reintroduce a way to disable the 0x21 probe on "
-            "V2 without new fault-capture evidence establishing it's safe — "
-            "this repo intentionally has no such override today."
+            "The reference feed depends on this probe: it stops on 0x04 long "
+            "before its FEEDL (28292) runs out, and a missed signal drives the "
+            "carriage to the end stop (#102, guarded by "
+            "_REFERENCE_FEED_TIMEOUT_S). An earlier per-model override that "
+            "skipped the probe entirely on the V2 caused real hardware faults "
+            "on repeated trials. Do not reintroduce a way to disable 0x21 on "
+            "the reference feed without new fault-capture evidence. Skipping "
+            "it on the second feed (#111) follows SilverFast and is not that "
+            "override."
         ),
-    ),
-    RegisterEntry(
-        addr="0x21",
-        name="Feed-probe index — meaning on 8200i SE",
-        asic=AsicFamily.GL128,
-        scope=(SCOPE_8200I_SE,),
-        meaning="Whether the real vendor driver uses wIndex=0x21 on the SE (as opposed to the V2, where it's confirmed unused) has not been independently checked.",
-        confidence=Confidence.UNKNOWN,
-        citations=_c("gl128.py:117 (_FEED_PROBE_INDEX=0x21) — SE-specific verification not done"),
     ),
     RegisterEntry(
         addr="0x25-0x27",
