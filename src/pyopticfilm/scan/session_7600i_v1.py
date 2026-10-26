@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""OpticFilm 7600i v1 scan session: replay the vendor job, then assemble square-pixel RGB16."""
+"""OpticFilm 7600i v1 scan session: run the job built from the decoded tables, then assemble square-pixel RGB16."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from pyopticfilm.device.model_7600i_v1 import MODEL_7600I_V1, shifts_for
 from pyopticfilm.exceptions import ScanError
 from pyopticfilm.image import ScanImage
 from pyopticfilm.logging import get_logger
-from pyopticfilm.scan.replay_gl843_v1 import ReplayHooks, check_cancel, prepare_profile, run_profile, widen_window
+from pyopticfilm.scan.job_gl843_v1 import job_for
+from pyopticfilm.scan.replay_gl843_v1 import ReplayHooks, check_cancel, run_profile
 
 logger = get_logger(__name__)
 
@@ -150,11 +151,7 @@ class Gl843V1ScanSession:
 
     def _scan_job(self, job, resolution, report, cancel, apply_calib, dummy_lines) -> np.ndarray:
         asic = self.asic
-        profile = self.model.replay_profile(job, resolution)
-        if self.model.window_start is not None:
-            profile = widen_window(profile, self.model.window_start)
-        profile = prepare_profile(profile, dummy_lines=dummy_lines or self.model.dummy_lines,
-                                  single_sample=self.model.single_sample)
+        profile = job_for(self.model, job, resolution, dummy_lines=dummy_lines)
         if not asic.position_known or not asic.is_at_home():
             asic.home()
         asic.position_known = False

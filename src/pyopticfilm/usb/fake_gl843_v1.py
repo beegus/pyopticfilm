@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""USB fakes for the OpticFilm 7600i v1: strict capture playback, and a simulated GL843."""
+"""USB fakes for the OpticFilm 7600i v1: strict job playback, and a simulated GL843."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class PlaybackMismatch(AssertionError):
 
 
 class CapturePlaybackTransport:
-    """Every transfer must match the next vendor op; reads return what the scanner returned."""
+    """Every transfer must match the next op of a job; reads return the op's expected reply."""
 
     def __init__(self, ops: list[dict]) -> None:
         self.ops = [o for o in ops if o["kind"] != "delay"]
@@ -70,7 +70,9 @@ class CapturePlaybackTransport:
 
     def bulk_write(self, data, *, timeout_ms=None) -> int:
         op = self._next("bulk write")
-        if op["kind"] != "write" or base64.b64decode(op["data"]) != bytes(data):
+        # shading computed while the job runs has a length, not a payload
+        expected = base64.b64decode(op["data"]) if "data" in op else None
+        if op["kind"] != "write" or (expected != bytes(data) if expected is not None else op["length"] != len(data)):
             raise PlaybackMismatch(f"vendor op {self.pos}: unexpected bulk write of {len(data)} bytes")
         self.pos += 1
         self.transactions.append(UsbTransaction(operation="bulk_write", data=bytes(data), length=len(data)))

@@ -18,6 +18,7 @@ from pyopticfilm.usb.protocol import (
     VALUE_BUF_ENDACCESS,
     VALUE_BUFFER,
     VALUE_GET_REGISTER,
+    VALUE_READ_REGISTER,
     VALUE_SET_REGISTER,
 )
 from pyopticfilm.usb.trace import UsbTransaction
@@ -71,7 +72,8 @@ class FakeDeviceHandle:
 class FakeUsbTransport:
     """Scripted USB device that records every transfer in order.
 
-    Register reads use the GL845 vendor-request framing. Status register ``0x41``
+    Register reads use the GL845 vendor-request framing, or the GL842/GL843 one
+    (address with ``0x83``, then ``0x84``). Status register ``0x41``
     defaults to an idle scanner (at home, buffer empty, frontend ready) so
     ASIC poll loops exit on the first read.
     """
@@ -83,6 +85,8 @@ class FakeUsbTransport:
     errors: list[BaseException] = field(default_factory=list)
     aborted: int = 0
     abort_drain_bytes: int = 42
+    #: GL842/GL843 register address for the next ``0x84`` read
+    address: int = 0
 
     def __post_init__(self) -> None:
         self.registers.setdefault(_R.REG_0x41, IDLE_STATUS_REG41)
@@ -201,6 +205,13 @@ class FakeUsbTransport:
             reg_val = self.registers.get(addr, 0x00) & 0xFF
             return bytes((reg_val, REGISTER_LINK_OK))
 
+        if rtype == REQUEST_TYPE_IN and request == REQUEST_REGISTER and value == VALUE_READ_REGISTER:
+            # GL842/GL843: the register at the address set last; the chip then increments it
+            addr = self.address
+            self._before_register_read(addr)
+            self.address = (addr + 1) & 0xFF
+            return bytes((self.registers.get(addr, 0x00) & 0xFF,))
+
         if rtype == REQUEST_TYPE_IN and request == REQUEST_REGISTER:
             self._before_probe_read(index)
             return bytes((self.request_register.get(index, 0x00) & 0xFF,))
@@ -225,6 +236,13 @@ class FakeUsbTransport:
             and request == REQUEST_REGISTER
             and value == VALUE_BUF_ENDACCESS
         ):
+            return b""
+
+        if rtype == REQUEST_TYPE_OUT and request == REQUEST_REGISTER and value == VALUE_SET_REGISTER:
+            payload = txn.data or b""
+            if len(payload) != 1:
+                raise UsbError(f"register address payload length {len(payload)}")
+            self.address = payload[0]
             return b""
 
         raise UsbError(

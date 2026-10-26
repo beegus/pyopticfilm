@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""OpticFilm 7600i v1 (GL843): SilverFast job sequences from USB captures (see docs/opticfilm-7600i-v1.md)."""
+"""OpticFilm 7600i v1 (GL843): jobs from tables decoded from SilverFast's recorded jobs (see docs/opticfilm-7600i-v1.md)."""
 
 from __future__ import annotations
 
@@ -33,14 +33,6 @@ def shifts_for(yres: int) -> tuple[float, ...]:
 def _load_data() -> dict:
     raw = resources.files("pyopticfilm.device.data").joinpath("opticfilm_7600i_v1.json.gz").read_bytes()
     return json.loads(gzip.decompress(raw))
-
-
-@lru_cache(maxsize=1)
-def _infrared_7200() -> dict:
-    from pyopticfilm.scan.replay_gl843_v1 import derive_infrared
-
-    p = _load_data()["profiles"]
-    return derive_infrared(p["color_7200"], p["color_3600"], p["infrared_3600"])
 
 
 @dataclass(frozen=True)
@@ -111,15 +103,16 @@ class Model7600iV1:
     def replay_data(self) -> dict:
         return _load_data()
 
-    def replay_profile(self, mode: str, dpi: int) -> dict:
-        """A copy of the vendor job for ``mode`` ("color" / "infrared") at ``dpi``; infrared at 7200 dpi
-        is derived from the 7200 dpi colour job (not captured)."""
+    def recorded_job(self, mode: str, dpi: int) -> dict:
+        """A copy of SilverFast's recorded job for ``mode`` ("color" / "infrared") at ``dpi``.
+
+        Scans run jobs built from :mod:`pyopticfilm.device.tables_7600i_v1`; the recordings are
+        the reference they are checked against, and hold SilverFast's calibration results.
+        """
         key = f"{'infrared' if mode == 'infrared' else 'color'}_{dpi}"
         profiles = self.replay_data()["profiles"]
-        if key == "infrared_7200":
-            return copy.deepcopy(_infrared_7200())
         if key not in profiles:
-            raise ValueError(f"{self.model} has no {mode} sequence at {dpi} dpi")
+            raise ValueError(f"{self.model} has no recorded {mode} job at {dpi} dpi")
         return copy.deepcopy(profiles[key])
 
 

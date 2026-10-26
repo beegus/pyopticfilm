@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 from pyopticfilm.advanced import AdvancedRegisters
-from pyopticfilm.asic.gl843_v1 import Gl843V1
 from pyopticfilm.asic.status import ScannerStatus
 from pyopticfilm.device.gl128_common import GL128_FIRMWARE_CURRENT, gl128_firmware_variant
 from pyopticfilm.device.model_7600i_v1 import Model7600iV1
@@ -63,8 +62,12 @@ class Scanner:
                 GL128_FIRMWARE_CURRENT,
                 self._model.init_regs[0x36],
             )
-        self._asic = asic or create_asic(self._protocol, self._model)
-        self._advanced = AdvancedRegisters(self._asic.usb if isinstance(self._asic, Gl843V1) else self._protocol)
+        if asic is None:
+            asic = create_asic(self._protocol, self._model)
+            # the ASIC may re-frame the protocol for its chip (GL842/GL843 register reads)
+            self._protocol = asic.protocol
+        self._asic = asic
+        self._advanced = AdvancedRegisters(self._protocol)
         self._calibrator = Calibrator(
             self._asic,
             cache_path=calib_cache if calib_cache is not None else default_cache_path(),

@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Genesys USB vendor-request helpers (GL845 path).
+"""Genesys USB vendor-request helpers.
 
 Constants and register/bulk framing mirror SANE genesys ``low.h`` and
 ``scanner_interface_usb.cpp``. Ported under GPL-3.0; see NOTICE.
+:class:`GenesysUsbProtocol` frames registers as GL845/846/847/GL124 do;
+:class:`Gl843UsbProtocol` as the older GL842/GL843.
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from pyopticfilm.exceptions import UsbError
 from pyopticfilm.logging import get_logger
 from pyopticfilm.usb.device import BULK_MAX_SIZE
 
@@ -47,6 +50,12 @@ BULK_REGISTER = 0x11
 # GL845/846/847/GL124 read path expects this status byte
 REGISTER_LINK_OK = 0x55
 
+#: GL843 write acknowledge: ``VALUE_GET_REGISTER`` at this index, bit 0 set
+INDEX_WRITE_ACK = 0x20
+#: an acknowledged write is sent up to this many times, polling the acknowledge this often each time
+WRITE_TRIES = 10
+ACK_POLLS = 10
+
 
 @runtime_checkable
 class UsbTransport(Protocol):
@@ -76,11 +85,17 @@ class GenesysUsbProtocol:
     def __init__(self, transport: UsbTransport) -> None:
         self._transport = transport
 
+    @property
+    def transport(self) -> UsbTransport:
+        return self._transport
+
+    def _out(self, request: int, value: int, index: int, payload: bytes) -> None:
+        """Every control write goes through here."""
+        self._transport.control_msg(REQUEST_TYPE_OUT, request, value, index, payload)
+
     @staticmethod
     def check_link_status(status_byte: int) -> None:
         """SANE genesys validates USB link with ``0x55`` on GL845-class reads."""
-        from pyopticfilm.exceptions import UsbError
-
         if status_byte != REGISTER_LINK_OK:
             raise UsbError(
                 f"Invalid USB link status 0x{status_byte:02x} (expected 0x55); "
@@ -104,8 +119,6 @@ class GenesysUsbProtocol:
             2,
         )
         if len(raw) != 2:
-            from pyopticfilm.exceptions import UsbError
-
             raise UsbError(f"Register read returned {len(raw)} bytes, expected 2")
 
         value, status = raw[0], raw[1]
@@ -122,13 +135,7 @@ class GenesysUsbProtocol:
         if address > 0xFF:
             usb_value |= 0x100
 
-        self._transport.control_msg(
-            REQUEST_TYPE_OUT,
-            REQUEST_BUFFER,
-            usb_value,
-            INDEX,
-            payload,
-        )
+        self._out(REQUEST_BUFFER, usb_value, INDEX, payload)
         logger.debug("write_register(0x%04x, 0x%02x)", address, value)
 
     def write_registers(self, pairs: list[tuple[int, int]]) -> None:
@@ -159,13 +166,7 @@ class GenesysUsbProtocol:
                 self.write_register(*batch[0])
             else:
                 payload = bytes(b for a, v in batch for b in (a & 0xFF, v & 0xFF))
-                self._transport.control_msg(
-                    REQUEST_TYPE_OUT,
-                    REQUEST_BUFFER,
-                    VALUE_SET_REGISTER,
-                    INDEX,
-                    payload,
-                )
+                self._out(REQUEST_BUFFER, VALUE_SET_REGISTER, INDEX, payload)
                 logger.debug("write_registers_batched: %d pairs", len(batch))
             batch.clear()
 
@@ -182,13 +183,7 @@ class GenesysUsbProtocol:
     def write_0x8c(self, index: int, value: int) -> None:
         """SANE ``write_0x8c`` — VALUE_BUF_ENDACCESS vendor request."""
         payload = bytes((int(value) & 0xFF,))
-        self._transport.control_msg(
-            REQUEST_TYPE_OUT,
-            REQUEST_REGISTER,
-            VALUE_BUF_ENDACCESS,
-            int(index) & 0xFF,
-            payload,
-        )
+        self._out(REQUEST_REGISTER, VALUE_BUF_ENDACCESS, int(index) & 0xFF, payload)
 
     def read_usb_speed_byte(self) -> int:
         """Cold-init probe used by SANE ``sanei_genesys_asic_init`` (REQUEST_REGISTER)."""
@@ -209,8 +204,6 @@ class GenesysUsbProtocol:
             1,
         )
         if not raw:
-            from pyopticfilm.exceptions import UsbError
-
             raise UsbError(f"REQUEST_REGISTER probe index=0x{index:02x} returned no data")
         return raw[0]
 
@@ -277,13 +270,7 @@ class GenesysUsbProtocol:
     def _bulk_read_send_header(self, size: int) -> None:
         """GL845/846/847/GL124 bulk-read preamble (fixed 0x10000000 address)."""
         # hard coded 0x10000000 address (SANE scanner_interface_usb.cpp)
-        self._transport.control_msg(
-            REQUEST_TYPE_OUT,
-            REQUEST_BUFFER,
-            VALUE_BUFFER,
-            0x00,
-            self._bulk_preamble(0x10000000, size),
-        )
+        self._out(REQUEST_BUFFER, VALUE_BUFFER, 0x00, self._bulk_preamble(0x10000000, size))
 
     def bulk_read_begin(
         self, size: int, *, index: int = BULK_IN, addr: int = 0x10000000
@@ -296,13 +283,7 @@ class GenesysUsbProtocol:
         (used for shading/calibration passes) and ``0x08`` reads the live image
         stream. Pair this with :meth:`bulk_read_chunk`.
         """
-        self._transport.control_msg(
-            REQUEST_TYPE_OUT,
-            REQUEST_BUFFER,
-            VALUE_BUFFER,
-            int(index) & 0xFF,
-            self._bulk_preamble(int(addr), int(size)),
-        )
+        self._out(REQUEST_BUFFER, VALUE_BUFFER, int(index) & 0xFF, self._bulk_preamble(int(addr), int(size)))
         logger.debug(
             "bulk_read_begin size=%d index=0x%02x addr=0x%08x", size, index, addr
         )
@@ -313,8 +294,6 @@ class GenesysUsbProtocol:
             return b""
         data = self._transport.bulk_read(min(size, BULK_MAX_SIZE))
         if not data:
-            from pyopticfilm.exceptions import UsbError
-
             raise UsbError("bulk_read returned empty data mid-transfer")
         return data
 
@@ -330,8 +309,6 @@ class GenesysUsbProtocol:
         while len(buf) < size:
             data = self._transport.bulk_read(min(size - len(buf), step))
             if not data:
-                from pyopticfilm.exceptions import UsbError
-
                 raise UsbError(
                     f"bulk_read returned empty after {len(buf)} of {size} bytes"
                 )
@@ -364,8 +341,6 @@ class GenesysUsbProtocol:
             self._bulk_read_send_header(block)
             data = self._transport.bulk_read(block)
             if not data:
-                from pyopticfilm.exceptions import UsbError
-
                 raise UsbError("bulk_read returned empty data mid-transfer")
             chunks.append(data)
             remaining -= len(data)
@@ -388,20 +363,99 @@ class GenesysUsbProtocol:
         outdata[6] = (size >> 16) & 0xFF
         outdata[7] = (size >> 24) & 0xFF
 
-        self._transport.control_msg(
-            REQUEST_TYPE_OUT,
-            REQUEST_BUFFER,
-            VALUE_BUFFER,
-            0x01,
-            bytes(outdata),
-        )
+        self._out(REQUEST_BUFFER, VALUE_BUFFER, 0x01, bytes(outdata))
 
         offset = 0
         while offset < size:
             block = min(size - offset, BULK_MAX_SIZE)
             written = self._transport.bulk_write(payload[offset : offset + block])
             if written <= 0:
-                from pyopticfilm.exceptions import UsbError
-
                 raise UsbError("bulk_write wrote 0 bytes mid-AHB transfer")
             offset += written
+
+
+class Gl843UsbProtocol(GenesysUsbProtocol):
+    """Register framing of the GL842/GL843 (SANE's path for chips before the GL845).
+
+    A read sets the address (``0x83``, one byte) then reads ``0x84``; the chip increments the
+    address after each read. Addresses are 8-bit. Writes are ``0x83`` address/value pairs, as
+    on the GL845; :meth:`write_registers_batched` packs up to 32 pairs per transfer, as the
+    OpticFilm 7600i v1 vendor driver does.
+
+    With ``acknowledge_writes`` every control write is followed by polls of ``0x8E``/``0x20``
+    until bit 0 is set, and is sent again when it stalls or is not acknowledged (the 7600i v1
+    vendor driver; SANE does not poll).
+    """
+
+    def __init__(self, transport: UsbTransport, *, acknowledge_writes: bool = False) -> None:
+        super().__init__(transport)
+        self.acknowledge_writes = acknowledge_writes
+        #: last value written to each register (pairs written with ``0x83``)
+        self.written: dict[int, int] = {}
+
+    @classmethod
+    def wrap(cls, usb: UsbTransport | GenesysUsbProtocol, *, acknowledge_writes: bool = False) -> Gl843UsbProtocol:
+        """``usb`` if it already is a GL843 protocol, else one over its transport (or ``usb`` itself)."""
+        if isinstance(usb, cls):
+            if usb.acknowledge_writes != acknowledge_writes:
+                raise ValueError(f"protocol has acknowledge_writes={usb.acknowledge_writes}, need {acknowledge_writes}")
+            return usb
+        transport = usb.transport if isinstance(usb, GenesysUsbProtocol) else usb
+        return cls(transport, acknowledge_writes=acknowledge_writes)
+
+    def _out(self, request: int, value: int, index: int, payload: bytes) -> None:
+        if self.acknowledge_writes:
+            self._out_acknowledged(request, value, index, payload)
+        else:
+            super()._out(request, value, index, payload)
+        if value == VALUE_SET_REGISTER and len(payload) > 1:
+            for i in range(0, len(payload) - 1, 2):
+                self.written[payload[i]] = payload[i + 1]
+
+    def _out_acknowledged(self, request: int, value: int, index: int, payload: bytes) -> None:
+        error: Exception | None = None
+        for _attempt in range(WRITE_TRIES):
+            try:
+                super()._out(request, value, index, payload)
+            except UsbError as exc:  # a stalled write is sent again
+                error = exc
+                continue
+            for _poll in range(ACK_POLLS):
+                if self.control_in(VALUE_GET_REGISTER, INDEX_WRITE_ACK, 1)[0] & 0x01:
+                    return
+        raise UsbError(f"control write 0x{value:02x} not acknowledged" + (f" ({error})" if error else ""))
+
+    def control_out(self, value: int, index: int, data: bytes | bytearray | list[int]) -> None:
+        """A vendor write: ``REQUEST_BUFFER`` for several bytes, ``REQUEST_REGISTER`` for one."""
+        payload = bytes(int(b) & 0xFF for b in data)
+        self._out(REQUEST_BUFFER if len(payload) > 1 else REQUEST_REGISTER, value, index, payload)
+
+    def control_in(self, value: int, index: int, length: int) -> bytes:
+        """A vendor read of exactly ``length`` bytes."""
+        request = REQUEST_BUFFER if length > 1 else REQUEST_REGISTER
+        data = self._transport.control_msg(REQUEST_TYPE_IN, request, value, index, length)
+        if len(data) != length:
+            raise UsbError(f"control read 0x{value:02x}/0x{index:02x} returned {len(data)} bytes")
+        return bytes(data)
+
+    def read_register(self, address: int) -> int:
+        address = self._address(address)
+        self.control_out(VALUE_SET_REGISTER, INDEX, [address])
+        value = self.control_in(VALUE_READ_REGISTER, INDEX, 1)[0]
+        logger.debug("read_register(0x%02x) -> 0x%02x", address, value)
+        return value
+
+    def write_register(self, address: int, value: int) -> None:
+        super().write_register(self._address(address), value)
+
+    def write_fe_register(self, address: int, value: int) -> None:
+        """Analog frontend register: address ``0x51``, data ``0x3A``/``0x3B``, in one transfer."""
+        value = int(value) & 0xFFFF
+        self.control_out(VALUE_SET_REGISTER, INDEX, [0x51, int(address) & 0xFF, 0x3A, value >> 8, 0x3B, value & 0xFF])
+
+    @staticmethod
+    def _address(address: int) -> int:
+        address = int(address)
+        if not 0 <= address <= 0xFF:
+            raise ValueError(f"GL843 register address 0x{address:x} is not 8-bit")
+        return address

@@ -9,13 +9,19 @@ from __future__ import annotations
 import time
 
 from pyopticfilm.asic.gl845 import Gl845
+from pyopticfilm.device.protocol import FilmModel
 from pyopticfilm.logging import get_logger
+from pyopticfilm.usb.protocol import GenesysUsbProtocol, Gl843UsbProtocol, UsbTransport
 
 logger = get_logger(__name__)
 
 
 class Gl842(Gl845):
     """GL842 ASIC — shares status/lamp/home with Gl845; different asic_boot."""
+
+    def __init__(self, protocol: GenesysUsbProtocol | UsbTransport, model: FilmModel) -> None:
+        # registers are read by address (0x83, then 0x84) as on the GL843, not as on the GL845
+        super().__init__(Gl843UsbProtocol.wrap(protocol), model)
 
     def asic_boot(self, *, cold: bool | None = None) -> None:
         if cold is None:

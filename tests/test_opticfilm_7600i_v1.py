@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""OpticFilm 7600i v1 (GL843): every job must replay exactly SilverFast's captured traffic."""
+"""OpticFilm 7600i v1 (GL843): jobs built from the decoded tables, run by the replay engine."""
 
 from __future__ import annotations
 
@@ -12,16 +12,14 @@ import pytest
 from pyopticfilm.asic.gl843_v1 import Gl843V1, Gl843V1Usb
 from pyopticfilm.device.model_7600i_v1 import MODEL_7600I_V1, Model7600iV1
 from pyopticfilm.device.select import create_asic, model_for_device, model_is_scan_ready
+from pyopticfilm.device.tables_7600i_v1 import FAST_RAMP, POSITION_STOP_MS
+from pyopticfilm.scan.job_gl843_v1 import build_job, job_for, measured_from, vendor_measured
 from pyopticfilm.scan.replay_gl843_v1 import (
     ReplayHooks,
-    collapse_recorded_waits,
-    derive_infrared,
-    prepare_profile,
     run_profile,
     shading_table,
     validate_profile,
     white_shading,
-    widen_window,
     widened_shading,
 )
 from pyopticfilm.scan.session import create_session
@@ -31,6 +29,7 @@ from pyopticfilm.usb.fake_gl843_v1 import CapturePlaybackTransport, SimulatedGl8
 from pyopticfilm.usb.protocol import GenesysUsbProtocol
 
 JOBS = [("color", 1440), ("color", 3600), ("color", 7200), ("infrared", 3600)]
+ALL_JOBS = JOBS + [("infrared", 7200)]
 
 
 class Clock:
@@ -42,6 +41,12 @@ class Clock:
 
     def sleep(self, s: float) -> None:
         self.t += s
+
+
+def _vendor_job(mode: str, dpi: int, **options) -> dict:
+    """SilverFast's job (no options), or with ``options``, built from the tables."""
+    measured = vendor_measured(MODEL_7600I_V1, mode, dpi, first_pixel=options.get("first_pixel"))
+    return build_job(mode, dpi, measured, **options)
 
 
 def _main_start_write(profile: dict) -> list[int]:
@@ -77,15 +82,19 @@ def test_data_file_has_every_job_with_provenance():
     for key, cap in data["provenance"]["captures"].items():
         assert len(cap["sha256"]) == 64, key
     for mode, dpi in JOBS:
-        validate_profile(MODEL_7600I_V1.replay_profile(mode, dpi))
+        validate_profile(MODEL_7600I_V1.recorded_job(mode, dpi))
 
 
 def test_unknown_job_is_refused():
-    with pytest.raises(ValueError, match="no infrared sequence at 1440"):
-        MODEL_7600I_V1.replay_profile("infrared", 1440)
+    with pytest.raises(ValueError, match="no recorded infrared job at 1440"):
+        MODEL_7600I_V1.recorded_job("infrared", 1440)
+    with pytest.raises(ValueError, match="no recorded infrared job at 7200"):
+        MODEL_7600I_V1.recorded_job("infrared", 7200)
+    with pytest.raises(KeyError):
+        build_job("color", 1800, measured_from(MODEL_7600I_V1.recorded_job("color", 3600)))
 
 
-# --------------------------------------------------------------------------- infrared 7200 (derived)
+# --------------------------------------------------------------------------- infrared
 
 
 def _lamp_sequence(profile: dict) -> list[str]:
@@ -98,18 +107,14 @@ def _lamp_sequence(profile: dict) -> list[str]:
     return out
 
 
-def test_infrared_derivation_reproduces_the_captured_3600_job():
-    profiles = MODEL_7600I_V1.replay_data()["profiles"]
-    derived = derive_infrared(profiles["color_3600"], profiles["color_3600"], profiles["infrared_3600"])
-
-    def kept(ops):  # without polls, delays and shading data
-        return [(o["kind"], o.get("data"), o.get("frame")) for o in ops if o["kind"] in ("control", "read")
-                and not (o["kind"] == "control" and (o["rt"] == 0xC0 or o["data"] == [0x41]))]
-
-    assert kept(derived["ops"]) == kept(profiles["infrared_3600"]["ops"])
-    ir7200 = MODEL_7600I_V1.replay_profile("infrared", 7200)
-    assert _lamp_sequence(ir7200) == _lamp_sequence(profiles["infrared_3600"])
+def test_infrared_7200_switches_the_lights_as_the_recorded_infrared_job():
+    ir7200 = _vendor_job("infrared", 7200)
+    assert _lamp_sequence(ir7200) == _lamp_sequence(MODEL_7600I_V1.recorded_job("infrared", 3600))
     validate_profile(ir7200)
+    # not recorded: unity shading while the white frame is read, SilverFast's infrared shading from it
+    m = vendor_measured(MODEL_7600I_V1, "infrared", 7200)
+    assert set(np.frombuffer(m.dark_shading, "<u2").reshape(-1, 256)[:, 1:252:2].ravel()) == {0x2000}
+    assert m.shading.widen is None and m.dark_offsets is None and m.final_gains is None
 
 
 def test_infrared_shading_matches_silverfast():
@@ -125,41 +130,37 @@ def test_infrared_shading_matches_silverfast():
         np.array([962, 0x2000, 1054, 0x2000, 1362, 0x2000], "<u2").tobytes())
 
 
-# --------------------------------------------------------------------------- vendor traffic
+# --------------------------------------------------------------------------- the engine runs the job
 
 
-@pytest.mark.parametrize(("mode", "dpi"), JOBS)
-def test_replay_is_exactly_the_vendor_traffic(mode, dpi):
-    profile = MODEL_7600I_V1.replay_profile(mode, dpi)
-    ops = collapse_recorded_waits(profile["ops"])
-    transport = CapturePlaybackTransport(ops)
+@pytest.mark.parametrize(("mode", "dpi"), ALL_JOBS)
+@pytest.mark.parametrize("default", [False, True])
+def test_engine_sends_exactly_the_job(mode, dpi, default):
+    profile = job_for(MODEL_7600I_V1, mode, dpi) if default else _vendor_job(mode, dpi)
+    transport = CapturePlaybackTransport(profile["ops"])
     clock = Clock()
     result = run_profile(profile, Gl843V1Usb(transport), ReplayHooks(sleep=clock.sleep, now=clock.now))
     assert transport.finished
     main = profile["frames"][profile["mainFrame"]]
     assert len(result.main) == main["bytes"] == main["pixels"] * main["lines"] * 6
-    stop = next(o["ms"] for o in profile["ops"] if o.get("timedStop"))
-    assert result.positioning_stop_ms == pytest.approx(stop, abs=1)
+    assert result.positioning_stop_ms == pytest.approx(POSITION_STOP_MS[(mode, dpi)], abs=1)
 
 
-def test_boot_program_is_the_start_of_the_vendor_job():
-    boot = [g for g in MODEL_7600I_V1.replay_data()["boot"] if g[0] != "8c"]
-    profile = MODEL_7600I_V1.replay_profile("color", 3600)
+def test_boot_is_the_vendor_boot_program(monkeypatch):
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    sim = SimulatedGl843V1Transport()
+    Gl843V1(GenesysUsbProtocol(sim), MODEL_7600I_V1).init()
+    sent = [list(t.data) for t in sim.transactions if t.operation == "control_write" and t.value in (0x83, 0x8C)]
+    boot = MODEL_7600I_V1.replay_data()["boot"]
+    want = [[g[2]] if g[0] == "8c" else g for g in boot]
+    assert sent[: len(want)] == want
+    profile = MODEL_7600I_V1.recorded_job("color", 3600)
     writes = [o["data"] for o in profile["ops"]
               if o["kind"] == "control" and o["rt"] == 0x40 and o["value"] == 0x83 and len(o["data"]) > 1]
-    assert writes[: len(boot)] == boot
-
-
-def test_only_the_infrared_job_has_a_stale_wait_to_collapse():
-    for mode, dpi in JOBS:
-        ops = MODEL_7600I_V1.replay_profile(mode, dpi)["ops"]
-        collapsed = collapse_recorded_waits(ops)
-        if mode == "infrared":
-            waits = [o for o in collapsed if o.get("waitMotorIdle")]
-            assert len(waits) == 1 and waits[0]["waitMotorIdle"] > 100
-            assert waits[0]["expected"][0] & 0x01 == 0
-        else:
-            assert collapsed is ops
+    regs = [g for g in boot if g[0] != "8c"]
+    assert writes[: len(regs)] == regs  # the vendor's job starts with the same program
 
 
 # --------------------------------------------------------------------------- dummy lines / exposure
@@ -170,25 +171,23 @@ def test_only_the_infrared_job_has_a_stale_wait_to_collapse():
     [(3600, "none", 0, 7000), (3600, "fewer", 0, 7000), (7200, "fewer", 1, 28000), (7200, "none", 0, 14000)],
 )
 def test_dummy_lines_scale_the_motor_cruise(dpi, setting, line_sel, cruise):
-    recorded = MODEL_7600I_V1.replay_profile("color", dpi)
-    p = prepare_profile(recorded, dummy_lines=setting)
-    rec_sel = recorded["scan"]["lineSel"]
+    vendor = _vendor_job("color", dpi)
+    p = _vendor_job("color", dpi, dummy_lines=setting)
+    rec_sel = vendor["scan"]["lineSel"]
     assert p["scan"]["lineSel"] == line_sel
     assert p["motorCruise"]["used"] == cruise
     # C' = C * (L'+1) / (L+1)
-    assert cruise == p["motorCruise"]["recorded"] * (line_sel + 1) // (rec_sel + 1)
+    assert cruise == p["motorCruise"]["silverfast"] * (line_sel + 1) // (rec_sel + 1)
     start = _main_start_write(p)
     i = start.index(0x1E)
     assert start[i + 1] & 0x0F == line_sel and start.index(0x0F) > i
-    assert p["scan"]["lPeriod"] == recorded["scan"]["lPeriod"]  # exposure unchanged
-    assert prepare_profile(recorded) is recorded
+    assert p["scan"]["lPeriod"] == vendor["scan"]["lPeriod"]  # exposure unchanged
+    assert _main_start_write(vendor) == [0x0F, 1]  # SilverFast's main scan: nothing written with the start
 
 
-@pytest.mark.parametrize(("mode", "dpi"), JOBS + [("infrared", 7200)])
+@pytest.mark.parametrize(("mode", "dpi"), ALL_JOBS)
 def test_default_dummy_lines_prevent_7200dpi_stalls(mode, dpi):
-    model = MODEL_7600I_V1
-    p = prepare_profile(model.replay_profile(mode, dpi), dummy_lines=model.dummy_lines,
-                        single_sample=model.single_sample)
+    p = job_for(MODEL_7600I_V1, mode, dpi)
     validate_profile(p)
     expected = 1 if dpi == 7200 else 0
     assert p["scan"]["lineSel"] == expected
@@ -200,12 +199,11 @@ def test_default_dummy_lines_prevent_7200dpi_stalls(mode, dpi):
 
 
 def test_single_sample_halves_the_lines():
-    recorded = MODEL_7600I_V1.replay_profile("color", 7200)
-    p = prepare_profile(recorded, dummy_lines="none", single_sample=True)
+    p = _vendor_job("color", 7200, dummy_lines="none", single_sample=True)
     validate_profile(p)
     f = p["frames"][p["mainFrame"]]
     assert (f["lines"], f["bytes"], p["yres"]) == (7061, 10248 * 7061 * 6, 7200)
-    assert p["motorCruise"] == {"recorded": 42000, "used": 7000}  # 2 steps per line
+    assert p["motorCruise"] == {"silverfast": 42000, "used": 7000}  # 2 steps per line
     regs = dict(zip(_main_start_write(p)[::2], _main_start_write(p)[1::2], strict=True))
     assert regs[0x25] << 16 | regs[0x26] << 8 | regs[0x27] == 2 * 7061  # LINCNT
     assert regs[0x35] << 16 | regs[0x36] << 8 | regs[0x37] == 10248 * 3  # MAXWD: two lines
@@ -214,13 +212,21 @@ def test_single_sample_halves_the_lines():
 
 
 def test_exposure_x3_reproduces_silverfast_multi_exposure_pass():
-    p = prepare_profile(MODEL_7600I_V1.replay_profile("color", 3600), exposure_multiplier=3)
+    p = _vendor_job("color", 3600, exposure_multiplier=3)
     start = _main_start_write(p)
     regs = {start[j]: start[j + 1] for j in range(0, len(start), 2)}
     assert (regs[0x38] << 8 | regs[0x39]) == 42000  # LPERIOD x3
     assert regs[0x1E] & 0x0F == 0  # no dummy lines
     assert regs[0x20] == 0x08  # BUFSEL
-    assert p["motorCruise"] == {"recorded": 14000, "used": 21000}
+    assert p["motorCruise"] == {"silverfast": 14000, "used": 21000}
+
+
+def test_motor_period_must_be_whole():
+    from pyopticfilm.device.tables_7600i_v1 import cruise
+
+    assert cruise(0, 10) == 1400  # 1440 dpi sampled once: ten steps per line
+    with pytest.raises(ValueError, match="whole motor period"):
+        cruise(0, 3)
 
 
 @pytest.mark.parametrize(("mode", "dpi", "start", "pixels"), [
@@ -228,7 +234,7 @@ def test_exposure_x3_reproduces_silverfast_multi_exposure_pass():
     ("infrared", 3600, 82, 5188), ("infrared", 7200, 80, 10378),
 ])
 def test_full_window_starts_at_the_first_lit_pixel(mode, dpi, start, pixels):
-    p = widen_window(MODEL_7600I_V1.replay_profile(mode, dpi), 80)
+    p = _vendor_job(mode, dpi, first_pixel=80)
     validate_profile(p)
     for i in (5, 6, 7):  # dark, white, image
         f = p["frames"][i]
@@ -245,7 +251,7 @@ def test_full_window_starts_at_the_first_lit_pixel(mode, dpi, start, pixels):
 
 
 def test_widened_shading_brings_added_pixels_to_the_recorded_level():
-    p = widen_window(MODEL_7600I_V1.replay_profile("color", 3600), 80)
+    p = _vendor_job("color", 3600, first_pixel=80)
     w = next(o["shading"] for o in p["ops"] if "shading" in o)
     pixels = p["frames"][w["frame"]]["pixels"]
     white = np.full((2, pixels, 3), 50000, "<u2")
@@ -253,6 +259,11 @@ def test_widened_shading_brings_added_pixels_to_the_recorded_level():
     table = widened_shading(base64.b64decode(w["widen"]["table"]), w["widen"]["extra"], white.tobytes(), pixels)
     words = np.frombuffer(table, "<u2").reshape(-1, 256)[:, :252].reshape(-1, 6)
     assert np.allclose(words[0, 1::2], 2 * np.median(words[64:80, 1::2], axis=0), rtol=1e-3)
+
+
+def test_vendor_calibration_is_the_recorded_jobs():
+    for mode, dpi in JOBS:
+        assert vendor_measured(MODEL_7600I_V1, mode, dpi) == measured_from(MODEL_7600I_V1.recorded_job(mode, dpi))
 
 
 # --------------------------------------------------------------------------- register protocol
@@ -305,12 +316,12 @@ def test_motor_waits_for_table_upload_before_starting(busy_polls):
     motion.sleep = lambda _: None
     if busy_polls == 256:
         with pytest.raises(UsbError, match="upload did not complete"):
-            motion.move(600, reverse=False, table=motion.rec["fast"], fmovno=0x46, timeout_s=5)
+            motion.move(600, reverse=False, table=FAST_RAMP, fmovno=0x46, timeout_s=5)
         assert motion.loaded is None
         assert not any(t.operation == "control_write" and t.data == bytes([0x0F, 1])
                        for t in sim.transactions)
     else:
-        motion.move(600, reverse=False, table=motion.rec["fast"], fmovno=0x46, timeout_s=5)
+        motion.move(600, reverse=False, table=FAST_RAMP, fmovno=0x46, timeout_s=5)
         assert sim.polls == 4
         assert sim.feed_finished
 
@@ -421,7 +432,7 @@ def test_unsupported_requests_are_refused(tmp_path):
 
 def test_profile_tables_round_trip():
     # motor tables are little-endian uint16 in base64; the decoder must not drop a trailing entry
-    profile = MODEL_7600I_V1.replay_profile("color", 3600)
+    profile = MODEL_7600I_V1.recorded_job("color", 3600)
     blob = next(o["data"] for o in profile["ops"] if o["kind"] == "write")
     assert len(base64.b64decode(blob)) % 2 == 0
 
@@ -432,7 +443,7 @@ def test_profile_tables_round_trip():
 def test_too_slow_transfer_stops_the_scan():
     from pyopticfilm.exceptions import ScanError
 
-    profile = MODEL_7600I_V1.replay_profile("color", 3600)
+    profile = _vendor_job("color", 3600)  # with backtracking, the scan needs its data rate
     clock = Clock()
 
     class Slow(CapturePlaybackTransport):
@@ -440,7 +451,7 @@ def test_too_slow_transfer_stops_the_scan():
             clock.t += 1.0  # 256 KB per second: far below the 2.7 MB/s this job needs
             return super().bulk_read(size, timeout_ms=timeout_ms)
 
-    transport = Slow(collapse_recorded_waits(profile["ops"]))
+    transport = Slow(profile["ops"])
     with pytest.raises(ScanError, match="MB/s"):
         run_profile(profile, Gl843V1Usb(transport), ReplayHooks(sleep=clock.sleep, now=clock.now))
 
