@@ -1510,6 +1510,7 @@ class Gl128:
         require_motion: bool = True,
         use_slow_slope: bool = False,
         final_positioning: bool = False,
+        ignore_probe: bool = False,
     ) -> None:
         """Replay the captured fast-feed recipe (see MOTOR.md).
 
@@ -1556,6 +1557,7 @@ class Gl128:
             timeout_s=timeout_s,
             stale_done=stale_done,
             require_motion=require_motion,
+            ignore_probe=ignore_probe,
         )
         done_s = time.monotonic() - started
         self._write(r.REG_0x02, r.FASTFED)  # 0x08 after move
@@ -1614,8 +1616,13 @@ class Gl128:
         timeout_s: float,
         stale_done: bool = False,
         require_motion: bool = True,
+        ignore_probe: bool = False,
     ) -> None:
         """Wait for a feed's step count to run out (probe ``0x21=0x04`` or ``FEEDFSH``).
+
+        ``ignore_probe``: end the feed on ``FEEDFSH`` and motor stop only. The probe
+        reads ``0x04`` ~50 ms after START on the second positioning feed while the
+        carriage is still moving; SilverFast never reads it there.
 
         The motor is still decelerating at this point; :meth:`wait_motor_idle` marks
         the end of the move. With ``require_motion`` (positioning feeds) a completion
@@ -1627,7 +1634,7 @@ class Gl128:
         next_status = 0.0
         while time.monotonic() < deadline:
             if motion_seen:
-                if self._read_feed_probe() == _FEED_PROBE_DONE:
+                if not ignore_probe and self._read_feed_probe() == _FEED_PROBE_DONE:
                     return
                 if time.monotonic() >= next_status:
                     status = self.read_status_reliable()
@@ -1636,7 +1643,7 @@ class Gl128:
                     next_status = time.monotonic() + HOME_POLL_S
                 time.sleep(_FEED_PROBE_POLL_S)
                 continue
-            probe = self._read_feed_probe()
+            probe = -1 if ignore_probe else self._read_feed_probe()
             status = self.read_status_reliable()
             if not require_motion:
                 if probe == _FEED_PROBE_DONE:
@@ -1719,6 +1726,7 @@ class Gl128:
             require_motion=True,
             use_slow_slope=False,
             final_positioning=True,
+            ignore_probe=True,
         )
         end = self.read_status_reliable()
         logger.info("GL128 positioned for scan (status 0x%02x)", end.raw)
