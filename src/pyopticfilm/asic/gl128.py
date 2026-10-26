@@ -1515,17 +1515,19 @@ class Gl128:
         """Replay the captured fast-feed recipe (see MOTOR.md).
 
         Does **not** write ``0x0d`` before ``0x0f`` — feeds in the capture start
-        with ``0x0f = 0x01`` alone. Completion is either the model's vendor
-        probe (``model.feed_probe_index``, SE only — see that attribute's
-        docstring) returning ``0x04``, or the ``0x101`` status register's
-        ``FEEDFSH`` bit (confirmed on both models; the only signal used on
-        the 8100 V2).
+        with ``0x0f = 0x01`` alone. Completion is either the vendor probe
+        (``wIndex=0x21``, ``_FEED_PROBE_INDEX``) returning ``0x04``, or the
+        ``0x101`` status register's ``FEEDFSH`` bit with ``MOTORENB`` clear.
 
         ``use_slow_slope``: pass ``True`` to upload ``SLOPE_TABLE_SLOW``
         instead of the fast ramp — see ``_upload_fast_slopes``.
 
         ``final_positioning``: pass ``True`` for the feed to the scan-start line
         so ``0xAF`` gets the vendor's second-feed value (``_FINAL_FEED_REG_AF``).
+
+        ``ignore_probe``: end the feed on ``FEEDFSH`` and motor stop only. SilverFast
+        never reads the probe on the scan-start feed (#111); the reference feed
+        still needs it.
         """
         steps = max(0, int(steps))
         if steps == 0:
