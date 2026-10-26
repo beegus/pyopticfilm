@@ -9,6 +9,10 @@ v1 uses its own leaf and session (`device/model_7600i_v1.py`,
 `scan/session_7600i_v1.py`). A change that is correct for one model is not
 automatically correct for the others.
 
+Adding a model or an ASIC? See
+[docs/adding-models-and-asics.md](docs/adding-models-and-asics.md) for the file
+layout, registration points and tests, using the GL128 siblings as the template.
+
 ## Specialize, do not retarget
 
 - Put model-specific constants and flags on **that model's** class
