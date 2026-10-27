@@ -22,6 +22,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **Checked against SilverFast.** Replaying 21 captured SilverFast searches (all three models, colour and IR, 600–7200 ppi) through the new code gives SilverFast's gain codes within 1 and its offset codes within 3.
   - **Fallback.** If a channel's black does not respond to the offset probe, that channel uses SilverFast's typical codes and a warning is logged.
   - **Recalibration.** Calibration cache v15 discards older entries, so the first scan after upgrading recalibrates.
+- **GL128 dark and white shading strips used the wrong clock settings at most resolutions** (8200i SE, 8100 V2). The dark and white strips that calibration reads at home are clocked and buffered by `0x2B`, `0xA5` and `0xAB`.
+  - **Before.** pyopticfilm wrote SilverFast's dark-strip values only at 1200 and 1800 ppi, and the image pass's values everywhere else. At 600 ppi that was `01/02/02` where SilverFast writes `02/01/30`; at 3600 ppi `04/01/01` where it writes `0C/01/30`. The white strip was wrong at 2400 ppi (`A5/AB` `01` instead of `02`) and 3600 ppi (`0x2B` `04` instead of `08`). None of it followed the window width.
+  - **The rule.** SilverFast's values depend on the strip width, with `pixels = (END − STR) × ppi / 7200` and 6 bytes per pixel:
+    - dark: `0x2B = ceil(3 × line bytes / 8192)`, `0xA5/0xAB = 01/30`;
+    - white: `0x2B = ceil(line bytes / 8192)` (doubled from 3600 ppi), `0xA5/0xAB = 02/02` (`01/01` from 3600 ppi).
+
+    It reproduces every SilverFast dark and white strip in the 8200i SE and 8100 V2 captures (66 strips, full frames and crops) and the 8300i SE dark strips.
+  - **What changes.** Both models now use the rule for each strip's own window. The 8100 V2's hand-coded 7200 ppi white override is gone; the rule gives the same `0x10`. The 8300i SE uses the rule for its dark strip and keeps its own measured white-strip clocks.
+  - **Recalibration.** Calibration cache v16 discards older entries.
 
 ### Notes for integrators
 
@@ -32,6 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - from `pyopticfilm.scan.calib_gl128`: `adaptive_afe_white_target`, `AFE_WHITE_TARGET_SF` / `_MIN` / `_MAX`, `AFE_OFFSET_MIN`, `AFE_GAIN_COARSE_DIVISOR` and `COLOR_AFE_SESSION04_OFFSETS`;
   - from `pyopticfilm.asic.gl128`: `IR_AFE_FALLBACK_GAINS`, `IR_AFE_FALLBACK_OFFSETS` and `IR_AFE_HEALTHY_MEAN`.
 - `search_afe_codes` and `AfeSearchConfig` remain for GL845.
+- `Gl128Common.shading_strip_clocks(resolution, *, dvdset, span=None)` takes the strip window span and defaults to SilverFast's full frame. New in `pyopticfilm.device.gl128_common`: `shading_clocks_for_window` and `FULL_FRAME_SPAN_NATIVE`. Removed: the `shading_dark_dummy_by_dpi` / `shading_dark_pixel_clock_a_by_dpi` / `shading_dark_pixel_clock_b_by_dpi` fields and the `SHADING_DARK_*_BY_DPI` tables.
 
 ## [1.3.8] - 2026-10-26
 

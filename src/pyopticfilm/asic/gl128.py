@@ -716,16 +716,9 @@ class Gl128:
             endpixel=endpixel,
             dpiset=dpiset,
         )
-        clocks = getattr(self.model, "shading_strip_clocks", None)
-        if callable(clocks):
-            dummy, clk_a, clk_b = clocks(int(resolution), dvdset=dvdset)
-        else:
-            asic_dpi = self.model.asic_dpi_for(int(resolution))
-            dummy_map = getattr(self.model, "dummy_by_dpi", None)
-            clock_map = getattr(self.model, "pixel_clock_by_dpi", None)
-            dummy = int(dummy_map.get(asic_dpi, 0x02)) if dummy_map else 0x02
-            clk = int(clock_map.get(asic_dpi, 0x02)) if clock_map else 0x02
-            clk_a = clk_b = clk
+        dummy, clk_a, clk_b = self.model.shading_strip_clocks(
+            int(resolution), dvdset=dvdset, span=end - start
+        )
         # Session 04 leaves the geometry standing between the dark strip and the
         # DVDSET white; write it on both so a white strip never inherits a stale
         # window (the values are identical when the caller passes one window).

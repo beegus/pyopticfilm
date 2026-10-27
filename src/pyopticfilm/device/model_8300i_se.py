@@ -24,8 +24,9 @@ All divergent knobs below come from SilverFast 9 USBPcap full-frame captures
     clock maps are 8300i-specific.
 
 **Shading**
-    Dark/white strip clocks differ from SE/V2; white @7200 dummy is ``0x26``
-    (V2 ``0x10``, SE ``0x17``).  See :meth:`shading_strip_clocks`.
+    The dark strip follows the window rule shared with the SE/V2. White-strip
+    clocks are 8300i-specific (``0xA5``/``0xAB`` ``03``/``02``); white @7200
+    dummy is ``0x26`` (SE/V2 ``0x10``).  See :meth:`shading_strip_clocks`.
 
 **Sensor timing**
     Per-scan overlay ``0x06``/``0x0B``/``0x52``–``0x57``/``0x5A``/``0x5B``/
@@ -182,16 +183,8 @@ _FEED2_BY_ASIC_DPI_8300I: dict[int, int] = {
     7200: 13128,  # measured
 }
 
-# Shading strip (dummy, clk_a, clk_b) keyed by asic_dpi.
-_SHADING_DARK_BY_ASIC_DPI: dict[int, tuple[int, int, int]] = {
-    600: (0x02, 0x01, 0x30),  # measured (150/300/600)
-    900: (0x03, 0x01, 0x30),  # measured
-    1200: (0x04, 0x01, 0x30),  # measured
-    1800: (0x06, 0x01, 0x30),  # measured
-    2400: (0x08, 0x01, 0x30),  # measured
-    3600: (0x0C, 0x01, 0x30),  # measured
-    7200: (0x17, 0x01, 0x30),  # measured
-}
+# White shading strip (dummy, clk_a, clk_b) keyed by asic_dpi. The dark strip
+# follows the shared GL128 rule, which reproduces every measured 8300i dark strip.
 _SHADING_WHITE_BY_ASIC_DPI: dict[int, tuple[int, int, int]] = {
     600: (0x03, 0x03, 0x03),  # measured
     900: (0x04, 0x03, 0x03),  # measured
@@ -309,14 +302,20 @@ class Model8300iSE(Gl128Common):
         """8300i CUSTOM slow ramp (head ``0x32BB``)."""
         return SLOPE_TABLE_SLOW
 
-    def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
+    def shading_strip_clocks(
+        self, resolution: int, *, dvdset: bool, span: int | None = None
+    ) -> tuple[int, int, int]:
         """Return ``(dummy, clk_a, clk_b)`` for a shading strip.
 
-        Capture-derived per asic dpi (docs §10.4). Unmeasured mid-ladder asic
-        dpi values (720/1440) fall back to the nearest measured key.
+        Dark (DVDSET off): the shared GL128 window rule, which matches every
+        measured 8300i dark strip (600-7200 ppi). White: the 8300i's own clocks,
+        per asic dpi (docs §10.4); unmeasured 720/1440 fall back to the nearest
+        measured key.
         """
+        if not dvdset:
+            return super().shading_strip_clocks(resolution, dvdset=False, span=span)
         key = self.asic_dpi_for(resolution)
-        table = _SHADING_WHITE_BY_ASIC_DPI if dvdset else _SHADING_DARK_BY_ASIC_DPI
+        table = _SHADING_WHITE_BY_ASIC_DPI
         if key in table:
             return table[key]
         nearest = min(table, key=lambda k: abs(int(k) - int(key)))

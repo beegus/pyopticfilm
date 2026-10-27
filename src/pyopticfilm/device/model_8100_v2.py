@@ -5,7 +5,7 @@
 The 8100 V2 (``07b3:1824``) uses the GL128 ASIC and is closely related to the
 8200i SE (``07b3:1825``).  It subclasses :class:`Gl128Common` (shared tables),
 **not** :class:`~pyopticfilm.device.model_8200i_se.Model8200iSE`, so SE capture
-constants cannot leak through inheritance.  Five constants differ from the SE,
+constants cannot leak through inheritance.  Four constants differ from the SE,
 all derived from USB captures of the V2 Windows driver (capture session Aug
 2026); the ASIC clock and ``0x0B`` boot values on the class differ as well.
 
@@ -27,13 +27,9 @@ all derived from USB captures of the V2 Windows driver (capture session Aug
     used.  Only 7200 dpi is confirmed; all other DPI entries are inherited from
     the shared GL128 map.
 
-**shading_strip_clocks: white-strip dummy at 7200 dpi = 0x10**
-    The white shading strip on V2 uses dummy register 0x2B = 0x10 (frame 2257)
-    while the SE driver computes 0x17 from ``dummy_by_dpi[7200]``.  This
-    difference affects only the calibration strip; the image-pass dummy remains
-    0x17 on both devices.  Dark-strip dummy is 0x17 on both (the SE driver
-    falls back to ``dummy_by_dpi[7200]`` at 7200 dpi; V2 frame 1661 confirms
-    the same value).
+The shading-strip clocks are not a V2 difference: the V2's white-strip dummy
+``0x10`` at 7200 dpi (frame 2257) is the full-frame value of the window rule both
+models share (:func:`~pyopticfilm.device.gl128_common.shading_clocks_for_window`).
 
 **max_image_lincnt_by_feed2 = {13128: 29012}**
     The SE regression fixture maps second-feed distances to capture LINCNT
@@ -138,7 +134,7 @@ _STAGGER_BY_DPI_8100_V2: dict[int, tuple[int, ...]] = {
 class Model8100V2(Gl128Common):
     """OpticFilm 8100 V2 — GL128 sibling of the 8200i SE without IR.
 
-    See module docstring for the five capture-derived overrides.
+    See module docstring for the four capture-derived overrides.
     """
 
     name: str = "plustek-opticfilm-8100-v2"
@@ -192,18 +188,6 @@ class Model8100V2(Gl128Common):
     image_read_chunk_bytes: int = 0xF000
     usb_image_lincnt_half_lines: bool = True
     image_lincnt_per_line: int = 4
-
-    def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
-        """Return ``(dummy, clk_a, clk_b)`` for a shading strip.
-
-        V2 white shading at 7200 dpi uses dummy=0x10 (SE computes 0x17 from
-        ``dummy_by_dpi``).  All other cases delegate to the shared
-        implementation.  Capture evidence: ``04_color_7200.pcapng`` frame 2257,
-        reg 0x2B = 0x10.
-        """
-        if dvdset and self.asic_dpi_for(resolution) == 7200:
-            return 0x10, 0x01, 0x01
-        return super().shading_strip_clocks(resolution, dvdset=dvdset)
 
     def scaled_ld_shift(self, ld: int, asic_dpi: int) -> int:
         """Round line-distance shifts (floor left G +0.8 / B +0.6 rows at 1440)."""

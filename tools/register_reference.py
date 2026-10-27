@@ -473,16 +473,29 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         name="Shading-strip dummy clock",
         asic=AsicFamily.GL128,
         scope=(SCOPE_ALL_GL128,),
-        meaning="Dummy-clock byte for the dark/white shading strips; per-DPI table (DUMMY_BY_DPI, SHADING_DARK_DUMMY_BY_DPI in device/gl128_common.py).",
+        meaning=(
+            "Shading strips, with 0xA5/0xAB: SilverFast's values depend on the strip "
+            "width. The RE calls 0x2B a buffer length in 8 KiB units, and the strip "
+            "line is 6 bytes per pixel (pixels = (END - STR) x ppi / 7200). Dark "
+            "strip: 0x2B = ceil(3 x line bytes / 8192), 0xA5/0xAB = 01/30. White "
+            "strip (8200i SE / 8100 V2): 0x2B = ceil(line bytes / 8192), x2 from "
+            "3600 ppi; 0xA5/0xAB = 02/02, 01/01 from 3600 ppi. Exact for every "
+            "SilverFast strip captured on those two models (full frames and crops) "
+            "and the 8300i SE dark strips; the 8300i SE white strip keeps its own "
+            "clocks (device/gl128_common.py shading_clocks_for_window)."
+        ),
         confidence=Confidence.CONFIRMED,
-        citations=_c("device/gl128_common.py DUMMY_BY_DPI / SHADING_DARK_DUMMY_BY_DPI"),
+        citations=_c(
+            "device/gl128_common.py shading_clocks_for_window",
+            "8200i-se sessions 03-14, 8100-v2 sessions 03-07, 8300i SE PPI ladder (GL128 parity audit 2026-10-26)",
+        ),
     ),
     RegisterEntry(
         addr="0x2B",
         name="Shading-strip dummy clock — V2 7200dpi white-strip override",
         asic=AsicFamily.GL128,
         scope=(SCOPE_8100_V2,),
-        meaning="V2's white shading strip at 7200dpi uses dummy=0x10, vs the SE-derived table's computed 0x17. Dark-strip dummy is 0x17 on both, confirmed on V2 too.",
+        meaning="Superseded: no longer a V2 override. 0x10 is the full-frame value of the shared strip-width rule (see the shading-strip entry above), which also gives the 8200i SE 0x10; the old SE value 0x17 was the image dummy. Kept as history.",
         confidence=Confidence.CONFIRMED,
         citations=_c("device/model_8100_v2.py module docstring, item 3 — capture evidence: frame 2257 (white), frame 1661 (dark)"),
     ),
