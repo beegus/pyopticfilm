@@ -309,7 +309,9 @@ def _merge_snr_rows(
     out = np.where(misaligned[..., np.newaxis], xa, merged)
     # No confident input: black at the noise floor, but a short clipped at the
     # top keeps its reading — 0 there turned clear film / slide highlights black.
-    out = np.where(both_zero, np.where(a >= clip_end, xa, 0.0), out)
+    # Test against clip_start: confidence already reads as zero a few DN below
+    # clip_end, and the noise floor is nowhere near it.
+    out = np.where(both_zero, np.where(a >= clip_start, xa, 0.0), out)
 
     both_zero_pix = np.all(both_zero, axis=2)
     chunk = np.clip(out, 0, 65535).astype(np.uint16)
@@ -489,12 +491,13 @@ def merge_n_passes(
         acc = weights[0] * xs[0]
         w_sum = weights[0].copy()
         all_zero_conf = cs[0] <= 1e-6
-        all_clipped = xs[0] >= _SNR_CLIP_END
+        # clip_start, not clip_end: confidence is already ~0 a few DN below clip_end.
+        all_clipped = xs[0] >= _SNR_CLIP_START
         for x, c, w_i in zip(xs[1:], cs[1:], weights[1:], strict=True):
             acc += w_i * x
             w_sum += w_i
             all_zero_conf &= c <= 1e-6
-            all_clipped &= x >= _SNR_CLIP_END
+            all_clipped &= x >= _SNR_CLIP_START
         merged = acc / np.maximum(w_sum, 1e-12)
         # Every frame's weight collapsed to zero at a pixel (e.g. all
         # flagged outlier) — fall back to the plain mean rather than a

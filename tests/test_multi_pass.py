@@ -108,3 +108,10 @@ def test_merge_n_passes_all_frames_clipped_keep_clip_level():
     result = merge_n_passes(frames)
     assert np.all(result.rgb[:, :, 1:] == 65535)
     assert np.all(result.rgb[:, :, 0] == round((65535 * 2 + 63000) / 3))
+
+
+def test_merge_n_passes_just_below_clip_end_is_not_black():
+    """Confidence is already ~0 a few DN below the clip end; 62256 must keep its level."""
+    frames = [np.full((4, 4, 3), 62256, dtype=np.uint16) for _ in range(3)]
+    result = merge_n_passes(frames)
+    assert np.all(result.rgb == 62256)

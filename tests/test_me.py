@@ -457,3 +457,13 @@ def test_band_shift_profile_refit_excludes_two_outlier_bands(monkeypatch):
     # line's range across the frame well past the 8px outlier threshold;
     # excluding both should collapse the fit back to ~0 everywhere.
     assert float(np.max(dy_per_row) - np.min(dy_per_row)) < 8.0
+
+
+def test_merge_snr_just_below_clip_end_is_not_black():
+    """Confidence is already ~0 a few DN below clip_end (62258.25); 62256 must keep its level."""
+    short = np.full((8, 8, 3), 8000, dtype=np.uint16)
+    long = np.full((8, 8, 3), 24000, dtype=np.uint16)
+    short[:, :, 0] = 62256
+    long[:, :, 0] = 65535
+    result = merge_exposures_result(short, long, align_shift=(0, 0))
+    assert np.all(result.rgb[:, :, 0] == 62256)
