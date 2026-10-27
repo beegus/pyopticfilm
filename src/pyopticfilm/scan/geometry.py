@@ -63,8 +63,8 @@ class ScanGeometry:
     #: cap would cut real columns. Assemble never drops more than this width.
     usb_end_drop: int = 0
     #: When > 0, assembled rows (at ``asic_dpi``) are cut to this height after
-    #: line shift and unstagger. Default full frames only, from the model's
-    #: ``full_frame_output_inches``.
+    #: line shift and unstagger: one frame (``full_frame_output_inches``) for a
+    #: default full frame, the crop height for a GL128 crop.
     frame_lines: int = 0
 
     @property
@@ -249,16 +249,32 @@ def _geometry_from_mm(
         # shift the programmed window by that width so the remaining optical
         # span is not STR-heavy. GL128 has none: STR/END match SilverFast.
         frame_shift = 0 if disable_buffer_full_move or end_inactive <= 0 else end_inactive
-        pixel_startx = (
-            origin_native + frame_shift + round(tl_x_mm * optical_res / MM_PER_INCH)
-        )
-        optical_pixels = max(1, round(width_mm * optical_res / MM_PER_INCH))
-        if span_align > 1 and optical_pixels >= span_align:
-            factor = max(1, optical_res // asic_dpi)
-            align = lcm(span_align, 2 * factor)
-            optical_pixels = (optical_pixels // align) * align
-        pixels = max(1, optical_pixels * asic_dpi // optical_res)
-        optical_pixels = pixels * optical_res // asic_dpi
+        factor = max(1, optical_res // asic_dpi)
+        frame_x_mm = float(getattr(model, "x_offset_ta_mm", 0.0))
+        if not disable_buffer_full_move and span_align > 1 and tl_x_mm >= frame_x_mm:
+            # SilverFast's image window (every capture, full frames and crops):
+            # STR steps from the full-frame STR in whole output pixels, and the
+            # width is round(w × dpi) made even (1440 dpi full frame: 2074 px,
+            # END 10612). Snapping the native span to a multiple of 4 instead
+            # dropped two pixels there.
+            frame_str = origin_native + frame_shift + round(frame_x_mm * optical_res / MM_PER_INCH)
+            pixel_startx = frame_str + round((tl_x_mm - frame_x_mm) * asic_dpi / MM_PER_INCH) * factor
+            pixels = max(2, round(width_mm * asic_dpi / MM_PER_INCH) // 2 * 2)
+            # Keep the right edge inside the full frame's own window.
+            frame_end = frame_str + round(model.x_size_ta_mm * asic_dpi / MM_PER_INCH) // 2 * 2 * factor
+            while pixels > 2 and pixel_startx + pixels * factor > frame_end:
+                pixels -= 2
+            optical_pixels = pixels * factor
+        else:
+            pixel_startx = (
+                origin_native + frame_shift + round(tl_x_mm * optical_res / MM_PER_INCH)
+            )
+            optical_pixels = max(1, round(width_mm * optical_res / MM_PER_INCH))
+            if span_align > 1 and optical_pixels >= span_align:
+                align = lcm(span_align, 2 * factor)
+                optical_pixels = (optical_pixels // align) * align
+            pixels = max(1, optical_pixels * asic_dpi // optical_res)
+            optical_pixels = pixels * optical_res // asic_dpi
         pixel_endx = pixel_startx + optical_pixels
         startx = max(0, pixel_startx * asic_dpi // optical_res - offset)
         usb_end_drop = (
@@ -316,6 +332,21 @@ def _geometry_from_mm(
     extra_lines = num_staggered
     if bool(getattr(model, "lincnt_includes_line_shift", True)):
         extra_lines += max_shift
+    # GL128 image pass: SilverFast's line count, the frame (one inch) or crop
+    # height plus the line shift and a tail; the output is cut back to that
+    # height after alignment (``frame_lines``). A crop never runs past the travel
+    # SilverFast's own full frames use: near the bottom it keeps fewer margin
+    # lines and loses the rest off the bottom after alignment, as before.
+    margin_fn = getattr(model, "image_line_margin", None)
+    if callable(margin_fn) and not disable_buffer_full_move:
+        out_lines = frame_lines or lines
+        total = out_lines + int(margin_fn(resolution))
+        if area is not None:
+            feed2 = int(model.feed_to_scan_steps_for_area(area))
+            room = int(model.max_safe_lincnt_for(feed2, resolution)) // lincnt_per_line
+            total = min(total, max(room, out_lines + extra_lines))
+        lines = total - extra_lines
+        frame_lines = out_lines
     register_lincnt = (lines + extra_lines) * lincnt_per_line
 
     channels = 3
