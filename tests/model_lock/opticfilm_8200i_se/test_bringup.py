@@ -79,7 +79,8 @@ def test_crop_widths_at_2400_are_even():
         g = compute_geometry(2400, model=MODEL_8200I_SE, area=(x1, 0.1, x2, 0.75))
         assert g.pixels % 2 == 0, g.pixels
         assert g.pixel_endx - g.pixel_startx == g.optical_pixels
-        assert g.optical_pixels % 4 == 0
+        # SilverFast's window: STR steps from 242 in whole output pixels.
+        assert (g.pixel_startx - 242) % 3 == 0
 
 
 def test_crop_widths_at_3600_are_even():

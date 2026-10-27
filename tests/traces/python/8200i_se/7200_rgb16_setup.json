@@ -8,9 +8,9 @@
     "mode": "rgb16",
     "phase": "init+configure",
     "pixels": 10368,
-    "lines": 870,
+    "lines": 923,
     "dpiset": 1200,
-    "lincnt": 3480,
+    "lincnt": 3692,
     "lperiod": 16035
   },
   "registers": {
@@ -48,8 +48,8 @@
     "0x23": "00",
     "0x24": "1a",
     "0x25": "00",
-    "0x26": "0d",
-    "0x27": "98",
+    "0x26": "0e",
+    "0x27": "6c",
     "0x28": "00",
     "0x29": "3e",
     "0x2a": "a3",

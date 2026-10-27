@@ -265,7 +265,13 @@ def effective_scan_area(
     width_px = max(1, int(geometry.pixels) - int(getattr(geometry, "usb_end_drop", 0) or 0))
     width_mm = width_px * MM_PER_INCH / max(1, geometry.asic_dpi)
     eff_x2 = min(1.0, max(x1 + 1e-6, x1 + width_mm / x_size))
-    eff_y2 = min(1.0, max(y1 + 1e-6, y1 + geometry.travel_mm / y_size))
+    # Travel includes the line-shift margin cut after alignment; the output
+    # covers at most ``frame_lines``.
+    out_mm = geometry.travel_mm
+    frame_lines = int(getattr(geometry, "frame_lines", 0) or 0)
+    if frame_lines > 0:
+        out_mm = min(out_mm, frame_lines * MM_PER_INCH / max(1, geometry.asic_dpi))
+    eff_y2 = min(1.0, max(y1 + 1e-6, y1 + out_mm / y_size))
     return clamp_area((x1, y1, eff_x2, eff_y2))
 
 
