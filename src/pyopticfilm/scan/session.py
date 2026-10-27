@@ -194,9 +194,7 @@ class ScanSession:
 
         plane = np.ascontiguousarray(rgb[:, :, 1])
         white = getattr(self.asic, "last_ir_host_white", None)
-        # The ASIC already applied the IR table when DVDSET was armed (GL128).
-        asic_flattened = bool(getattr(self.asic, "ir_asic_shading_ready", False))
-        if getattr(self.asic, "ir_host_flatten_ready", False) and white and not asic_flattened:
+        if getattr(self.asic, "ir_host_flatten_ready", False) and white:
             try:
                 plane = flatten_ir_columns(plane, white)
             except ValueError as exc:

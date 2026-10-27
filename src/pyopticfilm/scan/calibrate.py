@@ -582,11 +582,10 @@ class Calibrator:
     def measure_ir_host_flatten(self, geometry: ScanGeometry) -> bool:
         """GL128 IR: AFE search + IR white strip at home, before the IR pass.
 
-        A validated IR table arms DVDSET for the IR pass (``ir_asic_shading_ready``);
-        the white profile is also kept for the host flatten. The IR AFE codes are
-        kept only when that profile validates; otherwise the colour AFE codes are
-        restored and the IR pass falls back to the per-image flatten. Returns
-        ``ir_host_flatten_ready``.
+        IR never arms DVDSET, so the white profile feeds the host flatten in
+        the session's IR plane. The IR AFE codes are kept only when that profile
+        validates; otherwise the colour AFE codes are restored and the IR pass
+        falls back to the per-image flatten. Returns ``ir_host_flatten_ready``.
         """
         asic = self.asic
         if asic is None:
@@ -614,7 +613,6 @@ class Calibrator:
         ready = reason is None and bool(getattr(asic, "ir_host_flatten_ready", False))
         if not ready:
             asic.ir_host_flatten_ready = False  # type: ignore[attr-defined]
-            asic.ir_asic_shading_ready = False  # type: ignore[attr-defined]
             asic.last_ir_host_white = None  # type: ignore[attr-defined]
             if colour_afe is not None:
                 apply = getattr(asic, "apply_frontend", None)

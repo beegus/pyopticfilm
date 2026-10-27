@@ -260,11 +260,9 @@ class Gl128:
         #: If false, the next scan/position is refused because the carriage
         #: origin for the next feed pair is unknown.
         self._park_ok: bool = True
-        #: Set after a successful colour :meth:`run_asic_shading` upload this session.
+        #: Set after a successful :meth:`run_asic_shading` upload this session.
+        #: IR Lab never sets this — ASIC DVDSET clipped IR to full scale.
         self.asic_shading_ready = False
-        #: The shading RAM holds a validated IR table: the IR pass arms DVDSET.
-        #: Any other shading upload clears it.
-        self.ir_asic_shading_ready: bool = False
         #: Equalized per-column IR white (one value/column) for host flatten.
         self.last_ir_host_white: list[int] | None = None
         #: True when :attr:`last_ir_host_white` passed the IR validator.
@@ -696,7 +694,6 @@ class Gl128:
         if not blob:
             raise ValueError("shading blob is empty")
         self.protocol.write_ahb(AHB_SHADING, blob)
-        self.ir_asic_shading_ready = False
         logger.info("GL128 uploaded shading table (%d bytes) to 0x%08x", len(blob), AHB_SHADING)
 
     def _shading_window(
@@ -931,12 +928,10 @@ class Gl128:
         the image and DVDSET turns that into periodic dropouts.
 
         For ``method=\"infrared\"``, the optical dark strip is diagnostic only —
-        the uploaded table dark is forced to zero (session 05) and the gains are
-        per channel from the raw white. When it validates the IR pass arms
-        DVDSET, like SilverFast (:attr:`ir_asic_shading_ready`); the validated
-        white profile is also kept for the host flatten
-        (:attr:`ir_host_flatten_ready`), which the IR plane uses when DVDSET
-        stays off.
+        the uploaded table dark is forced to zero (session 05). Live ASIC DVDSET
+        clipped IR to full scale, so infrared **never** sets
+        ``asic_shading_ready``; a validated white profile is stored for host
+        flatten instead (:attr:`ir_host_flatten_ready`).
 
         Refuses if ``_motor_moves_enabled`` — Lab must disarm before shading and
         re-arm only for the image feeds (capture order: shade, then motor).
@@ -1057,11 +1052,7 @@ class Gl128:
                 white[0],
             )
         gains = shading_gains_from_white(white)
-        # IR table per channel from the raw white, like SF's (its IR gains differ
-        # per channel by ~1%; this unit's IR AFE gains differ far more). The
-        # equalized white only feeds the host-flatten fallback below.
-        table_white = raw_white if infrared and raw_white is not None else white
-        measured = build_measured_shading_table(dark, table_white, declared_size=declared)
+        measured = build_measured_shading_table(dark, white, declared_size=declared)
         self.upload_shading_table(measured)
         self._write(self.registers.REG_0x02, 0x00)
         self._require_carriage_at_home("ASIC shading end")
@@ -1080,24 +1071,18 @@ class Gl128:
             if ok:
                 self.last_ir_host_white = [int(row[0]) for row in white_prefix]
                 self.ir_host_flatten_ready = True
-                # SF arms DVDSET for the IR image pass with this table. Do the
-                # same when its gains are sane; otherwise keep the host flatten.
-                ir_gains = shading_gains_from_white(table_white)
-                asic_ok, asic_reason = validate_color_shading_gains(ir_gains[:n])
-                self.ir_asic_shading_ready = asic_ok
-                ir_median = sorted(int(c) for row in ir_gains[:n] for c in row)[n * 3 // 2]
                 logger.info(
-                    "GL128 IR shading ready dpi=%d acquire=%d window=%d..%d dpiset=%d "
-                    "raw_white0=%s median_gain=%.3fx DVDSET=%s%s",
+                    "GL128 IR host flatten ready dpi=%d acquire=%d "
+                    "window=%d..%d dpiset=%d white0=%s "
+                    "white_mean=%.0f measured_dark0=%s (DVDSET off)",
                     resolution,
                     n,
                     start,
                     end,
                     used_dpiset,
-                    table_white[0],
-                    ir_median / SHADING_GAIN_UNITY,
-                    "on" if asic_ok else "off",
-                    "" if asic_ok else f" (host flatten: {asic_reason})",
+                    white[0],
+                    white_mean,
+                    dark_measured[0],
                 )
             else:
                 self.last_ir_host_white = None
@@ -1267,7 +1252,6 @@ class Gl128:
         self.upload_tables(resolution=max(self.model.resolutions_dpi))
         self.last_afe = None
         self.asic_shading_ready = False
-        self.ir_asic_shading_ready = False
         self.last_ir_host_white = None
         self.ir_host_flatten_ready = False
         self.usb_planar_rgb = False
