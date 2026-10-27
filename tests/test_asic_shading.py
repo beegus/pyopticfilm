@@ -984,6 +984,7 @@ def test_infrared_clears_dvdset_even_when_colour_shading_ready():
 
     asic = _asic()
     asic.asic_shading_ready = True
+    asic.ir_asic_shading_ready = False  # colour table loaded, no IR table
     asic._scan_method = "infrared"
     asic._motor_moves_enabled = False
     asic._reg_cache = {}
@@ -1006,6 +1007,40 @@ def test_infrared_clears_dvdset_even_when_colour_shading_ready():
     r = Gl128Registers()
     assert r.REG_0x01 in wrote
     assert wrote[r.REG_0x01] & r.DVDSET == 0
+    assert wrote[r.REG_0x01] & r.SHDAREA
+
+
+def test_infrared_arms_dvdset_with_a_validated_ir_table():
+    from dataclasses import replace
+
+    from pyopticfilm.asic.registers import Gl128Registers
+    from pyopticfilm.scan.session_gl128 import Gl128ScanSession
+
+    asic = _asic()
+    asic.asic_shading_ready = False
+    asic.ir_asic_shading_ready = True  # IR table loaded (SF arms DVDSET for IR)
+    asic._scan_method = "infrared"
+    asic._motor_moves_enabled = False
+    asic._reg_cache = {}
+    asic.last_afe = None
+    wrote: dict[int, int] = {}
+
+    def write_registers_batched(items):
+        for addr, val in items:
+            wrote[int(addr)] = int(val)
+            asic._reg_cache[int(addr)] = int(val)
+
+    asic.protocol.write_registers_batched.side_effect = write_registers_batched
+    asic.upload_tables = MagicMock()
+    asic.apply_frontend = MagicMock()
+    asic.lamp_on = MagicMock()
+    asic.lamp_off = MagicMock()
+    geometry = replace(_geometry(1800), disable_buffer_full_move=False)
+    session = Gl128ScanSession(asic, MODEL_8200I_SE)
+    session._configure(geometry)
+    r = Gl128Registers()
+    assert r.REG_0x01 in wrote
+    assert wrote[r.REG_0x01] & r.DVDSET
     assert wrote[r.REG_0x01] & r.SHDAREA
 
 
