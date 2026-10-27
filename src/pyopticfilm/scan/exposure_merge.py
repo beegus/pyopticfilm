@@ -307,7 +307,9 @@ def _merge_snr_rows(
     ivw_spread = np.max(ivw, axis=2) - np.min(ivw, axis=2)
     misaligned = (lum_diff > _LUMA_DISAGREE_TAU) & (ivw_spread > _IVW_CHANNEL_SPREAD_TAU)
     out = np.where(misaligned[..., np.newaxis], xa, merged)
-    out = np.where(both_zero, 0.0, out)
+    # No confident input: black at the noise floor, but a short clipped at the
+    # top keeps its reading — 0 there turned clear film / slide highlights black.
+    out = np.where(both_zero, np.where(a >= clip_end, xa, 0.0), out)
 
     both_zero_pix = np.all(both_zero, axis=2)
     chunk = np.clip(out, 0, 65535).astype(np.uint16)
@@ -487,10 +489,12 @@ def merge_n_passes(
         acc = weights[0] * xs[0]
         w_sum = weights[0].copy()
         all_zero_conf = cs[0] <= 1e-6
+        all_clipped = xs[0] >= _SNR_CLIP_END
         for x, c, w_i in zip(xs[1:], cs[1:], weights[1:], strict=True):
             acc += w_i * x
             w_sum += w_i
             all_zero_conf &= c <= 1e-6
+            all_clipped &= x >= _SNR_CLIP_END
         merged = acc / np.maximum(w_sum, 1e-12)
         # Every frame's weight collapsed to zero at a pixel (e.g. all
         # flagged outlier) — fall back to the plain mean rather than a
@@ -499,7 +503,12 @@ def merge_n_passes(
         if np.any(no_weight):
             plain_mean = np.mean(np.stack(xs, axis=0), axis=0)
             merged = np.where(no_weight, plain_mean, merged)
-        merged = np.where(all_zero_conf, 0.0, merged)
+        # Black only at the noise floor; clipped in every frame keeps the clip level.
+        if np.any(all_clipped):
+            clipped_mean = np.mean(np.stack(xs, axis=0), axis=0)
+            merged = np.where(all_zero_conf, np.where(all_clipped, clipped_mean, 0.0), merged)
+        else:
+            merged = np.where(all_zero_conf, 0.0, merged)
 
         out[y0:y1] = np.clip(merged, 0, 65535).astype(np.uint16)
         conf_mean_pixel = np.mean(np.stack(cs, axis=0), axis=0)
