@@ -175,12 +175,10 @@ def test_8100_v2_capture_derived_constants():
     assert MODEL_8100_V2.feed_to_scan_steps == 13128
     assert MODEL_8200I_SE.feed_to_scan_steps == 13128
 
-    # lperiod at 7200 dpi differs from SE (15963)
+    # Full-frame lperiod at 7200 dpi is the capture value on every model; the
+    # SE's old 15963 was its session-13 crop, not a model difference.
     assert MODEL_8100_V2.lperiod_by_dpi[7200] == 16035
-    assert MODEL_8200I_SE.lperiod_by_dpi[7200] == 15963
-
-    # lperiod at other DPIs is inherited unchanged from SE
-    for dpi in (600, 1200, 1800, 3600):
+    for dpi in (600, 1200, 1800, 3600, 7200):
         assert MODEL_8100_V2.lperiod_by_dpi[dpi] == MODEL_8200I_SE.lperiod_by_dpi[dpi], dpi
 
     # White shading at 7200 dpi uses dummy=0x10 (SE would produce 0x17)

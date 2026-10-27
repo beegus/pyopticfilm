@@ -270,6 +270,8 @@ class Gl128:
         #: Last successful :meth:`search_afe` result; image configure re-applies
         #: it so scan setup does not wipe calibrated FE gains back to boot zero.
         self.last_afe: AfeFrontend | None = None
+        #: ``LPERIOD`` written by the last shading strip setup (for its log line).
+        self._strip_lperiod = 0
         #: USB line layout learned from AFE strip means (True=planar RRR…GGG…BBB…).
         self.usb_planar_rgb: bool = False
         #: Last colour shading validation failure (for CalibrationError text).
@@ -764,7 +766,8 @@ class Gl128:
         self.protocol.write_u24(r.REG_STRPIXEL, start)
         self.protocol.write_u24(r.REG_ENDPIXEL, end)
         self.protocol.write_u24(r.REG_FEEDL, 1)
-        self.protocol.write_u24(r.REG_LPERIOD, int(self.model.line_period_for(int(resolution))))
+        self._strip_lperiod = int(self.model.line_period_for(int(resolution), span=end - start))
+        self.protocol.write_u24(r.REG_LPERIOD, self._strip_lperiod)
         self.protocol.write_u24(r.REG_EXPOSURE, int(self.model.exposure_lperiod))
         self._write(r.REG_DEPTH_A, r.DEPTH16_A)
         self._write(r.REG_DEPTH_B, r.DEPTH16_B)
@@ -865,7 +868,7 @@ class Gl128:
                 "GL128 shading strip START 0x01=%#04x 0x02=%#04x LPERIOD=%d DEPTH=%#04x/%#04x (want 0x01=%#04x 0x02=%#04x)",
                 int(self.protocol.read_register(r.REG_0x01)) & 0xFF,
                 int(self.protocol.read_register(r.REG_0x02)) & 0xFF,
-                int(self.model.line_period_for(int(resolution))),
+                self._strip_lperiod,
                 int(self._reg_cache.get(r.REG_DEPTH_A, 0)) & 0xFF,
                 int(self._reg_cache.get(r.REG_DEPTH_B, 0)) & 0xFF,
                 reg01 & 0xFF,

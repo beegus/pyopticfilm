@@ -314,7 +314,8 @@ class Gl128ScanSession(ScanSession):
         cache[r.REG_0x02] = motor
 
         self._set24(cache, r.REG_LINCNT, geometry.lincnt_register)
-        self._set24(cache, r.REG_LPERIOD, model.line_period_for(dpi))
+        span = geometry.pixel_endx - geometry.pixel_startx
+        self._set24(cache, r.REG_LPERIOD, model.line_period_for(dpi, span=span))
         # Captures: AFE/shading always use DPISET = optical_resolution/6 (1200).
         dpiset = (
             model.optical_resolution // 6 if shading else geometry.register_dpiset
@@ -438,7 +439,7 @@ class Gl128ScanSession(ScanSession):
             geometry.lincnt_register,
             geometry.pixel_startx,
             geometry.pixel_endx,
-            model.line_period_for(dpi),
+            model.line_period_for(dpi, span=span),
             shading,
             exposure_reg,
         )

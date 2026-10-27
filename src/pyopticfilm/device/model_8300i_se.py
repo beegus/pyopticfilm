@@ -19,8 +19,9 @@ All divergent knobs below come from SilverFast 9 USBPcap full-frame captures
     twice the SE/V2 speed.
 
 **Timing**
-    Image-pass ``LPERIOD`` matches the V2 capture ladder at every measured
-    PPI.  Exposure is **15000** (SE/V2 use 14000).  Image dummy and pixel
+    ``LPERIOD`` follows the window rule shared by every GL128 model and
+    matches the 8300i ladder at every measured PPI.  Exposure is **15000**
+    (SE/V2 use 14000).  Image dummy and pixel
     clock maps are 8300i-specific.
 
 **Shading**
@@ -92,22 +93,6 @@ _STAGGER_BY_DPI_8300I: dict[int, tuple[int, ...]] = {
     3600: (),
     7200: (),
 }
-
-# V2 capture LPERIOD ladder (docs §5). Measured 8300i PPIs match byte-identically.
-_LPERIOD_BY_DPI_8300I: dict[int, int] = {
-    150: 11067,  # measured (asic→600)
-    300: 11067,  # measured (asic→600)
-    600: 11067,  # measured
-    720: 11110,  # filled (V2 ladder; no capture)
-    900: 11175,  # measured
-    1200: 11283,  # measured
-    1440: 11369,  # filled (V2 ladder; no capture)
-    1800: 11499,  # measured
-    2400: 11715,  # measured
-    3600: 13443,  # measured
-    7200: 16035,  # measured
-}
-assert set(_LPERIOD_BY_DPI_8300I) == set(LADDER_LINCNT_BY_DPI)
 
 # SilverFast full-frame LINCNT; the same travel as the 8100 V2 ladder (V2 / 4).
 _LADDER_LINCNT_BY_DPI_8300I: dict[int, int] = {
@@ -216,9 +201,6 @@ class Model8300iSE(Gl128Common):
     # Dpi-less fallback (7200 / ME-long). Prefer feed_to_scan_steps_for_dpi.
     feed_to_scan_steps: int = 13128
 
-    lperiod_by_dpi: Mapping[int, int] = field(
-        default_factory=lambda: dict(_LPERIOD_BY_DPI_8300I)
-    )
 
     max_image_lincnt_by_feed2: Mapping[int, int] = field(
         default_factory=lambda: {13128: 7253}

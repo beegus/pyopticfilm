@@ -5,7 +5,7 @@
 The 8100 V2 (``07b3:1824``) uses the GL128 ASIC and is closely related to the
 8200i SE (``07b3:1825``).  It subclasses :class:`Gl128Common` (shared tables),
 **not** :class:`~pyopticfilm.device.model_8200i_se.Model8200iSE`, so SE capture
-constants cannot leak through inheritance.  Five constants differ from the SE,
+constants cannot leak through inheritance.  Four constants differ from the SE,
 all derived from USB captures of the V2 Windows driver (capture session Aug
 2026); the ASIC clock and ``0x0B`` boot values on the class differ as well.
 
@@ -18,14 +18,10 @@ all derived from USB captures of the V2 Windows driver (capture session Aug
     *Capture evidence*: ``04_color_7200.pcapng`` frame 2999, registers
     0x3D–0x3F = 0x00 0x33 0x48 = 13 128.
 
-**lperiod_by_dpi[7200] = 16 035**
-    LPERIOD for the 8200i SE comes from the SilverFast 9 PPI ladder (SE session
-    13) and is 15 963 at 7200 dpi.  Every scan phase in the V2 capture — dark
-    shading (frame 1661), white shading (frame 2257), and image pass (frame
-    3203) — uses 16 035 instead.  The difference of +72 shifts the pixel-clock
-    budget and would produce timing errors on V2 hardware if the SE value is
-    used.  Only 7200 dpi is confirmed; all other DPI entries are inherited from
-    the shared GL128 map.
+``LPERIOD`` is not a V2 difference: the V2's 16 035 at 7200 dpi (frames 1661 /
+2257 / 3203) is the full-frame value of the window rule every GL128 model shares
+(:func:`~pyopticfilm.device.gl128_common.lperiod_for_window`); the SE's old
+15 963 was its session-13 crop.
 
 **shading_strip_clocks: white-strip dummy at 7200 dpi = 0x10**
     The white shading strip on V2 uses dummy register 0x2B = 0x10 (frame 2257)
@@ -75,20 +71,11 @@ from dataclasses import dataclass, field
 from pyopticfilm.device.gl128_common import (
     DUMMY_BY_DPI,
     LADDER_LINCNT_BY_DPI,
-    LPERIOD_BY_DPI,
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
     SCAN_REGS,
     Gl128Common,
 )
-
-# V2 7200 dpi LPERIOD observed in all three scan phases (dark/white shading and
-# image pass): 16 035.  All other DPI entries are carried over from the shared
-# GL128 map (SE session 13).
-_LPERIOD_BY_DPI_V2: dict[int, int] = {
-    **LPERIOD_BY_DPI,
-    7200: 16035,
-}
 
 # V2's ladder crop (feed2=13128) starts 432 steps earlier than the SE's
 # (feed2=13560), so it needs a taller image LINCNT at every PPI: the SE's
@@ -138,7 +125,7 @@ _STAGGER_BY_DPI_8100_V2: dict[int, tuple[int, ...]] = {
 class Model8100V2(Gl128Common):
     """OpticFilm 8100 V2 — GL128 sibling of the 8200i SE without IR.
 
-    See module docstring for the five capture-derived overrides.
+    See module docstring for the four capture-derived overrides.
     """
 
     name: str = "plustek-opticfilm-8100-v2"
@@ -150,11 +137,6 @@ class Model8100V2(Gl128Common):
     # Capture-derived override: V2 full-frame scan starts at the TA window top.
     # 04_color_7200.pcapng frame 2999, regs 0x3D–0x3F = 0x003348 = 13 128.
     feed_to_scan_steps: int = 13128
-
-    # 04_color_7200.pcapng frames 1661/2257/3203, reg 0x28–0x2A = 0x003EA3 = 16035.
-    lperiod_by_dpi: Mapping[int, int] = field(
-        default_factory=lambda: dict(_LPERIOD_BY_DPI_V2)
-    )
 
     # V2 capture LINCNT at feed2=13128: 29012 (full-frame 7200 dpi, frame 3203).
     max_image_lincnt_by_feed2: Mapping[int, int] = field(
