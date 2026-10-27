@@ -914,9 +914,10 @@ class Gl128:
         Returns the final measured shading blob. Sets ``asic_shading_ready``.
         Image scans keep ``DVDSET`` when ready so the ASIC applies this table.
 
-        Colour white strip: DVDSET + ``MTRPWR|AGOHOME`` (AGOHOME during the
-        measure so SCAN-clear parks; SF is MTRPWR-only). Exposure AHB only
-        after unity; dark/white use capture clocks.
+        White strip (colour and IR): DVDSET on the unity table + ``MTRPWR|AGOHOME``
+        (AGOHOME during the measure so SCAN-clear parks; SF is MTRPWR-only), so
+        the white is averaged over the carriage travel. Exposure AHB only after
+        unity; dark/white use capture clocks.
 
         Pass ``method=\"infrared\"`` so the white strip runs under the IR LED
         (session 05: IR table uses zero dark terms + near-equal whites).
@@ -1006,9 +1007,10 @@ class Gl128:
             self.lamp_on()
             self._log_lamp_state(where="shading pre-white")
         self.upload_tables(resolution=resolution, shading=False, slope=False)
-        if not infrared:
-            reg01 = (self._reg_cache.get(r.REG_0x01, 0x22) | r.SHDAREA | r.DVDSET) & ~r.SCAN
-            self._write(r.REG_0x01, reg01)
+        # Arm DVDSET on the unity table for the white strip, colour and IR alike
+        # (SF 8300i SE ladder / 8200i SE session 05: IR white 0x01=0x23, 0x02=0x10).
+        reg01 = (self._reg_cache.get(r.REG_0x01, 0x22) | r.SHDAREA | r.DVDSET) & ~r.SCAN
+        self._write(r.REG_0x01, reg01)
 
         if infrared:
             self.lamp_on()
@@ -1027,10 +1029,12 @@ class Gl128:
                 self._write(r.REG_0x03, r.XPASEL)
                 self._apply_infrared(enabled=True)
         time.sleep(0.5)
-        # SF session 03: after unity, white strip with 0x01=0x23 (SHDAREA|DVDSET).
-        # At unity gain the ASIC returns ``raw - dark``, so ~50-57k here is the
-        # expected reading; the gains below turn that into the flattening table.
-        white_raw = self.acquire_shading_strip(resolution=resolution, pixels=n, dvdset=not infrared, **window)
+        # SF session 03: after unity, white strip with 0x01=0x23 (SHDAREA|DVDSET)
+        # and the motor running, so the white reference is averaged over the
+        # carriage travel rather than read at one spot. At unity gain the ASIC
+        # returns ``raw - dark`` (IR dark is 0), so ~50-57k here is the expected
+        # reading; the gains below turn that into the flattening table.
+        white_raw = self.acquire_shading_strip(resolution=resolution, pixels=n, dvdset=True, **window)
         white = average_rgb16_columns(white_raw, pixels=n, lines=SHADING_LINES, planar=strip_planar)
         raw_white: list[tuple[int, int, int]] | None = None
         self.last_host_calib_dark = None
