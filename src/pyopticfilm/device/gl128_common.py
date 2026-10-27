@@ -509,6 +509,19 @@ class Gl128Common:
         """Native lines the ASIC returns per *ASIC* output line."""
         return max(1, self.optical_resolution // self.asic_dpi_for(resolution))
 
+    def image_line_margin(self, resolution: int) -> int:
+        """Lines SilverFast scans past the frame or crop height on an image pass.
+
+        ``round(ld_shift_b × dpi / 7200) + (5 at 7200 dpi, else 1)``: the blue
+        line shift plus a tail. Full frames: one inch + margin (605 at 600 dpi,
+        1813 at 1800, 7253 at 7200), on all three models. The 8200i SE ladder
+        crop: ``floor(h × dpi)`` + margin at every rung (h = 24.045 mm). The
+        margin is cut again after line-shift alignment.
+        """
+        dpi = self.asic_dpi_for(resolution)
+        shift = round(int(self.ld_shift_b) * dpi / int(self.motor_base_ydpi))
+        return shift + (5 if self.oversample_for(resolution) == 1 else 1)
+
     def multi_pass_allowed_at(self, resolution: int) -> bool:
         """Whether multi-exposure and Multi-Pass may run at ``resolution``.
 

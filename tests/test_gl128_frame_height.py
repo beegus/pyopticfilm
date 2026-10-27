@@ -35,6 +35,8 @@ def test_7200_reads_enough_rows_for_one_inch(model):
     assert after_shift - geometry.max_color_shift - geometry.num_staggered_lines >= 7200
 
 
-def test_crops_and_calib_are_not_cut():
-    assert compute_geometry(1800, model=MODEL_8300I_SE, area=(0.0, 0.0, 1.0, 1.0)).frame_lines == 0
+def test_crops_keep_their_height_and_calib_is_not_cut():
+    # A crop is cut to its own height (the line-shift margin), not to one inch.
+    crop = compute_geometry(1800, model=MODEL_8300I_SE, area=(0.0, 0.0, 1.0, 1.0))
+    assert crop.frame_lines == int(MODEL_8300I_SE.y_size_ta_mm * 1800 / 25.4)
     assert compute_calib_geometry(1800, model=MODEL_8300I_SE).frame_lines == 0
