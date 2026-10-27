@@ -271,6 +271,12 @@ LADDER_LINCNT_BY_DPI: dict[int, int] = {
     7200: 27476,
 }
 
+#: ``0x1D`` low bits (LINESEL) on the dark and white shading strips, by ASIC
+#: dpi; every other rung writes 0. SilverFast captures: 8200i SE
+#: ``13_ppi_ladder`` / ``06_color_high_dpi``, 8100 V2 ``04_color_7200`` /
+#: ``06_ppi_ladder`` / ``07_multi_exposure``. AFE strips stay at 0.
+SHADING_LINESEL_BY_DPI: dict[int, int] = {3600: 1, 7200: 2}
+
 #: Leaf-only fields that must be declared independently on every GL128 sibling.
 #: Values are compared in ``tests/test_gl128_siblings.py``.
 GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
@@ -297,6 +303,7 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "image_read_chunk_bytes",
         "usb_image_lincnt_half_lines",
         "image_lincnt_per_line",
+        "shading_linesel_by_dpi",
     }
 )
 
@@ -488,6 +495,7 @@ class Gl128Common:
         sensor_custom_regs: Mapping[int, int]
         usb_image_lincnt_half_lines: bool
         image_lincnt_per_line: int
+        shading_linesel_by_dpi: Mapping[int, int]
 
     @property
     def max_area_mm(self) -> tuple[float, float]:
@@ -561,6 +569,20 @@ class Gl128Common:
         if span is None:
             span = FULL_FRAME_SPAN_NATIVE
         return shading_clocks_for_window(self.asic_dpi_for(resolution), int(span), dvdset=dvdset)
+
+    def shading_linesel_for(self, resolution: int) -> int:
+        """``0x1D`` low bits (LINESEL) for the dark and white shading strips."""
+        return int(self.shading_linesel_by_dpi.get(self.asic_dpi_for(resolution), 0))
+
+    def shading_white_motor_period(self, resolution: int) -> int:
+        """Scan-motor table period for the white shading strip.
+
+        SilverFast uploads ``exposure × (LINESEL + 1) / 4`` before every white
+        strip, not the image pass's table: 3500 / 7000 / 10500 on the 8200i SE
+        and 8100 V2, 3750 / 7500 / 15000 on the 8300i SE, in every capture from
+        150 to 7200 ppi.
+        """
+        return int(self.exposure_lperiod) * (self.shading_linesel_for(resolution) + 1) // 4
 
     def channel_exposure_for(self, resolution: int, *, exposure: int | None = None) -> int:
         """Per-channel RAM exposure, ``exposure // oversample`` in the captures."""

@@ -848,8 +848,12 @@ def test_run_asic_shading_calls_exposure_only_after_unity(monkeypatch):
     asic.acquire_shading_strip = MagicMock(side_effect=[strip, white])
     calls: list[dict] = []
 
-    def _upload(*, resolution: int, shading: bool = False, slope: bool = True):
-        calls.append({"resolution": resolution, "shading": shading, "slope": slope})
+    def _upload(
+        *, resolution: int, shading: bool = False, slope: bool = True, channel_exposure: int | None = None
+    ):
+        calls.append(
+            {"resolution": resolution, "shading": shading, "slope": slope, "exposure": channel_exposure}
+        )
 
     asic.upload_tables = MagicMock(side_effect=_upload)
     monkeypatch.setattr(
@@ -866,6 +870,8 @@ def test_run_asic_shading_calls_exposure_only_after_unity(monkeypatch):
     asic.run_asic_shading(resolution=1800, strpixel=240, endpixel=240 + n * 4, dpiset=300)
     assert calls, "expected upload_tables after unity"
     assert calls[0]["slope"] is False
+    # SilverFast's white-strip motor table (exposure / 4 at LINESEL 0).
+    assert calls[0]["exposure"] == 3500
     # One unity upload, one measured upload — no re-upload after arming 0x22.
     assert asic.upload_shading_table.call_count == 2
     assert asic.asic_shading_ready is True

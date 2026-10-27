@@ -70,6 +70,7 @@ from pyopticfilm.device.gl128_common import (
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
     SCAN_REGS,
+    SHADING_LINESEL_BY_DPI,
     Gl128Common,
 )
 
@@ -170,6 +171,9 @@ class Model8100V2(Gl128Common):
     image_read_chunk_bytes: int = 0xF000
     usb_image_lincnt_half_lines: bool = True
     image_lincnt_per_line: int = 4
+    shading_linesel_by_dpi: Mapping[int, int] = field(
+        default_factory=lambda: dict(SHADING_LINESEL_BY_DPI)
+    )
 
     def scaled_ld_shift(self, ld: int, asic_dpi: int) -> int:
         """Round line-distance shifts (floor left G +0.8 / B +0.6 rows at 1440)."""

@@ -168,6 +168,14 @@ _FEED2_BY_ASIC_DPI_8300I: dict[int, int] = {
     7200: 13128,  # measured
 }
 
+# Shading-strip 0x1D low bits (LINESEL) keyed by asic_dpi; 600-1800 measured 0,
+# 720/1440 not captured. One step above the SE/V2 from 2400 ppi.
+_SHADING_LINESEL_BY_ASIC_DPI_8300I: dict[int, int] = {
+    2400: 1,  # measured
+    3600: 1,  # measured
+    7200: 3,  # measured
+}
+
 # White shading strip (dummy, clk_a, clk_b) keyed by asic_dpi. The dark strip
 # follows the shared GL128 rule, which reproduces every measured 8300i dark strip.
 _SHADING_WHITE_BY_ASIC_DPI: dict[int, tuple[int, int, int]] = {
@@ -237,6 +245,9 @@ class Model8300iSE(Gl128Common):
     #: height and hit the end of travel.
     usb_image_lincnt_half_lines: bool = False
     image_lincnt_per_line: int = 1
+    shading_linesel_by_dpi: Mapping[int, int] = field(
+        default_factory=lambda: dict(_SHADING_LINESEL_BY_ASIC_DPI_8300I)
+    )
 
     def feed_to_scan_steps_for_dpi(
         self, resolution: int, *, long_exposure: bool = False
