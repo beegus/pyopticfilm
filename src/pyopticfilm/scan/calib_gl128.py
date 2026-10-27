@@ -775,8 +775,8 @@ def flatten_ir_columns(
 
     ``ir`` is HxW uint16. ``white`` is a per-column profile (length ≥ W).
     Default ``target`` is the mean of the *smoothed* ``white[:W]`` so average
-    level is kept. Live ASIC DVDSET clipped IR to full scale; this is the Lab
-    substitute.
+    level is kept. Used instead of ASIC DVDSET for IR, whose per-pixel table
+    streaks the IR plane (see ``Gl128.run_asic_shading``).
 
     Raw per-column divide imprinted barcode banding on HW (period-4 / strip
     FPN). By default the white profile is low-pass filtered so only slow
