@@ -256,3 +256,19 @@ def test_scanner_scan_single_pass_exposure_not_implemented_for_non_gl128():
             scanner.scan(resolution=900, area=_TINY, apply_calib=False, single_pass_exposure=5000)
     finally:
         scanner.close()
+
+
+def test_single_pass_exposure_applies_to_colour_plus_ir():
+    """``infrared=True`` routes through the multi-pass path; the override must not be dropped."""
+    session, _usb = _mock_gl128_session_armed()
+    passes: list[tuple[str, int | None, bool]] = []
+    configure = session._configure
+
+    def spy(geometry):
+        if not geometry.disable_buffer_full_move:
+            passes.append((session.asic._scan_method, session._pass_exposure, session._pass_manual))
+        return configure(geometry)
+
+    session._configure = spy  # type: ignore[method-assign]
+    session.run(resolution=150, area=_TINY, apply_calib=False, infrared=True, single_pass_exposure=20000)
+    assert passes == [("transparency", 20000, True), ("infrared", 20000, True)]
