@@ -10,6 +10,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **GL128 default full-frame scans at 1440 ppi (8200i SE, 8100 V2) and 7200 ppi (8100 V2) raised `ScanError`** (`Image LINCNT 5804 at 1440 dpi … past the 48.7 mm scan-window end`). The image-pass motor gate stopped every scan at `scan_window_end_steps` (27636), but SilverFast's own full frames run up to 12 steps further: the 8100 V2 captures scan LINCNT 5804 at 1440 ppi and end at 27648 at 600 and 720 ppi. The gate now uses that limit, `max_travel_end_steps` (27648), through the new `max_safe_lincnt_for`. Every SilverFast full-frame LINCNT on the three models fits, and anything longer is still refused. Crop sizing in Scan Lab keeps the scan-window end, so crops and the Full window are unchanged.
 - **GL128 image passes overwrote the calibrated blue AFE offset** (8200i SE, 8100 V2, 8300i SE). The frontend is written through ports: `0x51` selects the AFE index and a write to `0x5E` commits the value. Before every image pass, pyopticfilm programmed the calibrated AFE codes and then rewrote its whole register cache, which includes the boot value `0x5E=0x1F`. With `0x51` still pointing at index 7, that set the blue offset to `0x1F` regardless of calibration. A pyopticfilm USB capture on the 8200i SE shows it on the wire (blue offset `0x10` → `0x1F`). The blue black level in the image no longer matched the level the shading dark terms were measured at. SilverFast never writes `0x5E` after its final AFE programming. The image-pass register write now skips `0x51`/`0x5D`/`0x5E`, so the calibrated codes stay as programmed.
+- **GL128 AFE calibration pinned every offset at its floor and set the gains about half as high as SilverFast** (8200i SE, 8100 V2, 8300i SE). The offset search tried to bring the *white* level to `0x3000` (12288), which an offset can't reach once the gains put white at 45–50k. Every search therefore walked all three offsets down to the `0x10` floor: a real 8200i SE ended at `10/10/10`, and the tester's 8300i SE logged `offsets=(16, 16, 16) means=(44147,49427,46906)`. The black level was never measured. The gains came from a heuristic fitted under different strip timing, landing around half of SilverFast's (8200i SE `12/0F/12` against `26/1D/24`), so the shading table had to make up the difference digitally.
+  - **What SilverFast does.** The AFE now does the same, taken from the strip pixel data in SilverFast's own captures. The first 60 pixels of the AFE strip are shielded optical-black pixels.
+    1. With gains at 0, it probes offsets `0x80` and `0xFF` and sets offsets that put optical black just above 0.
+    2. It reads the wide strip and sets each gain with the AD9826 law, `trunc(75.6 − 75.6·mean/target)`, using per-channel targets.
+    3. It probes again at the new gains and puts optical black at `0x500` for colour, 0 for infrared. These are the registry's `LINEDARK` values.
+  - **AFE strip timing.** The strips now use SilverFast's timing:
+    - LPERIOD `10979`/`13445`, or `11107`/`16040` from 3600 ppi;
+    - `0x2B` `0x02`/`0x17`;
+    - `0xA3=0` and `0xA6`–`0xA9 = 00 01 00 01`.
+  - **Checked against SilverFast.** Replaying 21 captured SilverFast searches (all three models, colour and IR, 600–7200 ppi) through the new code gives SilverFast's gain codes within 1 and its offset codes within 3.
+  - **Fallback.** If a channel's black does not respond to the offset probe, that channel uses SilverFast's typical codes and a warning is logged.
+  - **Recalibration.** Calibration cache v15 discards older entries, so the first scan after upgrading recalibrates.
+
+### Notes for integrators
+
+- `Gl128.search_afe(method=..., resolution=...)` replaces `search_afe(config=..., method=...)`. `resolution` selects SilverFast's strip line periods for that scan. `Gl128.acquire_afe_strip` takes an optional `timing=AfeStripTiming(...)`.
+- `coarse_gains_from_wide_means(means, *, targets=...)` now uses the AD9826 law with per-channel white targets instead of `round((65535 − mean) / 1155)`.
+- New in `pyopticfilm.scan.calib_gl128`: `optical_black_means`, `offsets_for_black_level`, `afe_strip_timing`, `AfeStripTiming` and the `AFE_*` targets.
+- Removed:
+  - from `pyopticfilm.scan.calib_gl128`: `adaptive_afe_white_target`, `AFE_WHITE_TARGET_SF` / `_MIN` / `_MAX`, `AFE_OFFSET_MIN`, `AFE_GAIN_COARSE_DIVISOR` and `COLOR_AFE_SESSION04_OFFSETS`;
+  - from `pyopticfilm.asic.gl128`: `IR_AFE_FALLBACK_GAINS`, `IR_AFE_FALLBACK_OFFSETS` and `IR_AFE_HEALTHY_MEAN`.
+- `search_afe_codes` and `AfeSearchConfig` remain for GL845.
 
 ## [1.3.8] - 2026-10-26
 

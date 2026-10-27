@@ -34,15 +34,23 @@ from pyopticfilm.device.tables_8200i_se import exposure_table
 from pyopticfilm.exceptions import AsicError, MotorTimeoutError, ScanError
 from pyopticfilm.logging import get_logger
 from pyopticfilm.scan.calib_gl128 import (
+    AFE_BLACK_TARGET_COLOR,
+    AFE_BLACK_TARGET_IR,
     AFE_ENDPIXEL,
-    AFE_OFFSET_MIN,
+    AFE_FALLBACK_OFFSETS_COLOR,
+    AFE_FALLBACK_OFFSETS_IR,
+    AFE_FALLBACK_PRE_OFFSETS,
+    AFE_OFFSET_PROBE_HIGH,
+    AFE_OFFSET_PROBE_LOW,
+    AFE_PRE_OFFSET_BLACK,
     AFE_STRIP_BYTES,
     AFE_STRPIXEL,
+    AFE_WHITE_TARGETS_COLOR,
+    AFE_WHITE_TARGETS_IR,
     AFE_WIDE_BYTES,
     AFE_WIDE_ENDPIXEL,
     AFE_WIDE_PIXELS,
     AHB_SHADING,
-    COLOR_AFE_SESSION04_OFFSETS,
     COLOR_SHADING_DARK_MEAN_MAX,
     COLOR_SHADING_DARK_SETTLE_S,
     FE_GAIN_INDICES,
@@ -51,19 +59,19 @@ from pyopticfilm.scan.calib_gl128 import (
     SHADING_GAIN_UNITY,
     SHADING_LINES,
     AfeFrontend,
-    AfeSearchConfig,
-    adaptive_afe_white_target,
+    AfeStripTiming,
+    afe_strip_timing,
     average_rgb16_columns,
     build_measured_shading_table,
     channel_means_u16,
     choose_usb_planar,
     coarse_gains_from_wide_means,
     declared_shading_size,
-    decode_afe_offset,
     encode_afe_offset,
     equalize_ir_white_columns,
     make_unity_white_table,
-    search_afe_codes,
+    offsets_for_black_level,
+    optical_black_means,
     shading_acquire_width,
     shading_columns_mean,
     shading_gains_from_white,
@@ -77,15 +85,6 @@ from pyopticfilm.usb.protocol import GenesysUsbProtocol
 logger = get_logger(__name__)
 
 ScanMethod = Literal["transparency", "infrared"]
-
-#: Session 05 IR pass settled near these FE codes when home IR is too dim for
-#: the dichotomy target — prefer them over mid-probe 0x80 / searched gains.
-IR_AFE_FALLBACK_GAINS: tuple[int, int, int] = (6, 16, 12)
-IR_AFE_FALLBACK_OFFSETS: tuple[int, int, int] = (0x30, 0x29, 0x31)
-#: Offset pegged at the top with at least this mean is already usable — keep
-#: those offsets (dropping to ``IR_AFE_FALLBACK_OFFSETS`` starved shading whites
-#: and DVDSET clipped the image to full scale).
-IR_AFE_HEALTHY_MEAN = 8000
 
 BRINGUP_HINT = (
     "GL128 (OpticFilm 8200i SE / 8100 V2 / 8300i SE) support is derived from "
@@ -208,6 +207,11 @@ def _u16_table_bytes(words: tuple[int, ...]) -> bytes:
         out[2 * i] = word & 0xFF
         out[2 * i + 1] = (word >> 8) & 0xFF
     return bytes(out)
+
+
+def _encode_offsets(values: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Signed offsets to sign-magnitude FE codes."""
+    return (encode_afe_offset(values[0]), encode_afe_offset(values[1]), encode_afe_offset(values[2]))
 
 
 class Gl128:
@@ -479,34 +483,32 @@ class Gl128:
         self._write(r.REG_0x01, reg01)
         self._write(r.REG_START, r.START_GO)
 
-    def _setup_afe_strip_regs(self, *, wide: bool = False) -> None:
-        """Stationary AFE strip geometry (session 03 window, motor off)."""
+    def _setup_afe_strip_regs(self, *, wide: bool = False, timing: AfeStripTiming | None = None) -> None:
+        """Stationary AFE strip geometry and timing (SF window and registers, motor off)."""
         r = self.registers
         self._apply_stationary_scan_regs()
         dpi_calib = self.model.optical_resolution // 6
-        # Image leftover 0x2B/0xA5/0xAB are dpi-specific; AFE is the 1200-dpi
-        # dark-strip clock set (session 03). Skipping this after an 1800 pass
+        if timing is None:
+            timing = afe_strip_timing(dpi_calib, wide=wide, pre_offset=not wide)
+        # Image leftover 0xA5/0xAB are dpi-specific; AFE uses the 1200-dpi
+        # dark-strip pixel clocks (session 03). Skipping this after an 1800 pass
         # left the CCD clock in image mode and START hung at 0xcd.
-        afe_clock_dpi = 1200
-        asic_dpi = getattr(self.model, "asic_dpi_for", None)
-        if callable(asic_dpi):
-            afe_clock_dpi = int(asic_dpi(1200))
-        clocks = getattr(self.model, "shading_strip_clocks", None)
-        if callable(clocks):
-            dummy, clk_a, clk_b = clocks(afe_clock_dpi, dvdset=False)
-        else:
-            dummy, clk_a, clk_b = 0x04, 0x01, 0x30
-        self._write(0x2B, int(dummy))
+        _dummy, clk_a, clk_b = self.model.shading_strip_clocks(
+            self.model.asic_dpi_for(1200), dvdset=False
+        )
+        self._write(0x2B, int(timing.dummy))
         self._write(0xA5, int(clk_a))
         self._write(0xAB, int(clk_b))
-        self._write(0xA3, 0x01)
+        # SF AFE strips: 0xA3=0, 0xA6:0xA7 = 0xA8:0xA9 = 1 (PartB B4.2).
+        self._write(0xA3, 0x00)
+        self._write_many({0xA6: 0x00, 0xA7: 0x01, 0xA8: 0x00, 0xA9: 0x01})
         end = AFE_WIDE_ENDPIXEL if wide else AFE_ENDPIXEL
         self.protocol.write_u24(r.REG_LINCNT, 1)
         self.protocol.write_u16(r.REG_DPISET, dpi_calib)
         self.protocol.write_u24(r.REG_STRPIXEL, AFE_STRPIXEL)
         self.protocol.write_u24(r.REG_ENDPIXEL, end)
         self.protocol.write_u24(r.REG_FEEDL, 1)
-        self.protocol.write_u24(r.REG_LPERIOD, int(self.model.exposure_lperiod))
+        self.protocol.write_u24(r.REG_LPERIOD, int(timing.lperiod))
         self.protocol.write_u24(r.REG_EXPOSURE, int(self.model.exposure_lperiod))
         self._write(r.REG_DEPTH_A, r.DEPTH16_A)
         self._write(r.REG_DEPTH_B, r.DEPTH16_B)
@@ -521,6 +523,7 @@ class Gl128:
         size: int = AFE_STRIP_BYTES,
         *,
         timeout_s: float = 5.0,
+        timing: AfeStripTiming | None = None,
     ) -> bytes:
         """Read one stationary 16-bit AFE strip. Does not move the carriage."""
         if not self._initialized:
@@ -532,7 +535,7 @@ class Gl128:
 
         # Abort leftover image SCAN/AGOHOME before geometry writes (0xcd hang).
         self._reset_stationary_scan_engine(where="AFE strip")
-        self._setup_afe_strip_regs(wide=size >= AFE_WIDE_BYTES)
+        self._setup_afe_strip_regs(wide=size >= AFE_WIDE_BYTES, timing=timing)
         last_exc: ScanError | None = None
         for attempt in range(1 + _STATIONARY_START_RETRIES):
             if attempt:
@@ -564,171 +567,100 @@ class Gl128:
     def search_afe(
         self,
         *,
-        config: AfeSearchConfig | None = None,
         method: ScanMethod | None = None,
+        resolution: int | None = None,
     ) -> AfeFrontend:
-        """Run the stationary PGA gain then offset search; leave FE at the result.
+        """SilverFast's coarse AFE calibration; leave the FE at the result.
 
-        Colour sets coarse gains from a wide lamp-on strip, infrared runs a gain
-        dichotomy with the white lamp off; both then search offsets toward a
-        white target. Motor stays gated/off.
+        Measured from the strip pixel data in SF's own captures (see the AFE
+        block in :mod:`~pyopticfilm.scan.calib_gl128`):
+
+        1. gains 0, two-point probe at offsets ``0x80``/``0xFF``, offsets that
+           put the optical-black columns at ~0;
+        2. a wide strip under the method's light at those offsets, AD9826 gain
+           codes toward per-channel white targets;
+        3. the two-point probe again under the new gains, offsets that put
+           optical black at ``0x500`` (colour) or 0 (infrared).
+
+        ``resolution`` picks SF's strip line periods for that scan. The lamp (or
+        IR LED) stays on; the motor stays off.
         """
         if not self._initialized:
             self.init()
         if method is not None:
             self.set_scan_method(method)
-        cfg = config or AfeSearchConfig()
-
-        # AFE strips are chunky RGB: per-channel FE sweeps on the 8200i SE move
-        # only their own channel under a chunky decode, while a planar decode
-        # blends all three. Image/shading layout stays ``model.usb_planar_rgb``.
         infrared = self._scan_method == "infrared"
-        # Capture timeline: lamp on for colour mid probe + wide/coarse + offsets.
+        scan_dpi = self.model.asic_dpi_for(resolution if resolution is not None else 1200)
+        pre_timing = afe_strip_timing(scan_dpi, wide=False, pre_offset=True)
+        timing = afe_strip_timing(scan_dpi, wide=True)
+        # Strips are decoded chunky (per-channel FE sweeps on the 8200i SE move
+        # only their own channel that way); image/shading layout stays the model's.
+        self.usb_planar_rgb = self.model.usb_planar_rgb
+        # Never lamp_off() here: in IR mode it clears the IR LED too.
         self.lamp_on()
         time.sleep(0.3)
-        self.apply_frontend(AfeFrontend(gains=(0, 0, 0), offsets=(0x80, 0x80, 0x80)))
-        probe = self.acquire_afe_strip(AFE_STRIP_BYTES)
-        probe_means = channel_means_u16(probe, planar=False)
-        white_target = adaptive_afe_white_target(probe_means)
-        self.usb_planar_rgb = bool(getattr(self.model, "usb_planar_rgb", False))
-        logger.info(
-            "GL128 AFE probe_means=(%.0f,%.0f,%.0f) (chunky); white_target=%#x",
-            probe_means[0],
-            probe_means[1],
-            probe_means[2],
-            int(white_target),
+
+        zero = (0, 0, 0)
+        pre = self._offsets_for_black(
+            zero, AFE_PRE_OFFSET_BLACK, pre_timing, fallback=AFE_FALLBACK_PRE_OFFSETS, stage="pre-offset"
         )
-
-        def measure(fe: AfeFrontend) -> tuple[float, float, float]:
-            self.apply_frontend(fe)
-            strip = self.acquire_afe_strip(AFE_STRIP_BYTES)
-            return channel_means_u16(strip, planar=False)
-
-        # SF (colour and IR alike, 8200i SE session 05 / 8300i captures): wide
-        # strip + coarse gains under the method's light, no gain dichotomy. IR
-        # keeps the IR LED on and the white lamp off (lamp_on in IR mode); never
-        # lamp_off() here — it clears the IR LED too and the gains run away.
-        self.apply_frontend(AfeFrontend(gains=(0, 0, 0), offsets=(0x80, 0x80, 0x80)))
-        wide = self.acquire_afe_strip(AFE_WIDE_BYTES)
+        self.apply_frontend(AfeFrontend(gains=zero, offsets=_encode_offsets(pre)))
+        wide = self.acquire_afe_strip(AFE_WIDE_BYTES, timing=timing)
         wide_means = channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False)
-        gains = coarse_gains_from_wide_means(wide_means)
-        gain_seed = gains
+        gains = coarse_gains_from_wide_means(
+            wide_means, targets=AFE_WHITE_TARGETS_IR if infrared else AFE_WHITE_TARGETS_COLOR
+        )
+        offsets = self._offsets_for_black(
+            gains,
+            AFE_BLACK_TARGET_IR if infrared else AFE_BLACK_TARGET_COLOR,
+            timing,
+            fallback=AFE_FALLBACK_OFFSETS_IR if infrared else AFE_FALLBACK_OFFSETS_COLOR,
+            stage="black offset",
+        )
+        result = AfeFrontend(gains=gains, offsets=_encode_offsets(offsets))
+        self.apply_frontend(result)
+        self.last_afe = result
         logger.info(
-            "GL128 AFE wide strip (%s) means=(%.0f,%.0f,%.0f) coarse_gains=%s",
-            "IR LED" if infrared else "lamp on",
+            "GL128 AFE %s dpi=%d pre_offsets=%s wide_means=(%.0f,%.0f,%.0f) gains=%s offsets=%s",
+            "infrared" if infrared else "colour",
+            scan_dpi,
+            pre,
             wide_means[0],
             wide_means[1],
             wide_means[2],
             gains,
-        )
-        time.sleep(0.5)
-
-        def _encode(values: tuple[int, int, int]) -> tuple[int, int, int]:
-            return (encode_afe_offset(values[0]), encode_afe_offset(values[1]), encode_afe_offset(values[2]))
-
-        def apply_offsets(values: tuple[int, int, int]) -> tuple[float, float, float]:
-            return measure(AfeFrontend(gains=gains, offsets=_encode(values)))
-
-        # Search the signed offset so the dichotomy never steps into the
-        # sign-magnitude negatives (codes >= 0x100), where the mean falls as
-        # the code rises and the search runs away to the top.
-        offset_floor = 0 if infrared else AFE_OFFSET_MIN
-        offset_values = search_afe_codes(
-            initial=(0x80, 0x80, 0x80),
-            code_max=cfg.offset_max,
-            code_min=offset_floor,
-            target=float(white_target),
-            iterations=cfg.iterations,
-            tolerance=cfg.tolerance,
-            code_increases_mean=cfg.offset_increases_mean,
-            apply=apply_offsets,
-        )
-        result = AfeFrontend(gains=gains, offsets=_encode(offset_values))
-        # Near the top of the offset range means the target was unreachable — fall back.
-        peg_floor = cfg.offset_max - 2
-
-        def _pegged(code: int) -> bool:
-            return decode_afe_offset(code) >= peg_floor
-
-        if all(_pegged(o) for o in result.offsets):
-            pegged_means = measure(result)
-            pegged_offsets = result.offsets
-            if infrared:
-                if min(pegged_means) >= IR_AFE_HEALTHY_MEAN:
-                    result = AfeFrontend(gains=IR_AFE_FALLBACK_GAINS, offsets=pegged_offsets)
-                    fallback_label = "session-05 gains + keeping pegged offsets"
-                else:
-                    result = AfeFrontend(gains=IR_AFE_FALLBACK_GAINS, offsets=IR_AFE_FALLBACK_OFFSETS)
-                    fallback_label = "session-05 IR gains+offsets"
-            else:
-                result = AfeFrontend(gains=gains, offsets=(0x80, 0x80, 0x80))
-                fallback_label = "kept gains + mid-probe offsets 0x80"
-            logger.warning(
-                "GL128 AFE offsets pegged at max %s with means=(%.0f,%.0f,%.0f); falling back to %s (gains=%s offsets=%s)",
-                pegged_offsets,
-                pegged_means[0],
-                pegged_means[1],
-                pegged_means[2],
-                fallback_label,
-                result.gains,
-                result.offsets,
-            )
-        elif not infrared and any(_pegged(o) for o in result.offsets):
-            # One runaway channel is as bad as three: at the rail its dark term
-            # clips to 0 and the whole frame takes that channel's cast. SF's own
-            # codes are the safe stand-in for a channel the search cannot reach.
-            safe = [COLOR_AFE_SESSION04_OFFSETS[c] if _pegged(o) else o for c, o in enumerate(result.offsets)]
-            capped: tuple[int, int, int] = (safe[0], safe[1], safe[2])
-            logger.warning(
-                "GL128 AFE offset pegged on some channels %s (target %#x unreachable); using session-04 codes there → %s",
-                result.offsets,
-                int(white_target),
-                capped,
-            )
-            result = AfeFrontend(gains=gains, offsets=capped)
-        elif not infrared and (result.gains == (0, 0, 0) or result.offsets == (0, 0, 0)):
-            collapsed = []
-            if result.gains == (0, 0, 0):
-                collapsed.append("gains")
-                if gain_seed != (0, 0, 0):
-                    restored_gains = gain_seed
-                    gain_src = f"gain_seed={gain_seed}"
-                else:
-                    restored_gains = (38, 30, 36)
-                    gain_src = "hardcoded baseline (38,30,36)"
-            else:
-                restored_gains = result.gains
-                gain_src = "search result"
-            if result.offsets == (0, 0, 0):
-                collapsed.append("offsets")
-                restored_offsets = COLOR_AFE_SESSION04_OFFSETS
-                offset_src = f"session-04 codes {COLOR_AFE_SESSION04_OFFSETS}"
-            else:
-                restored_offsets = result.offsets
-                offset_src = "search result"
-            result = AfeFrontend(gains=restored_gains, offsets=restored_offsets)
-            logger.warning(
-                "GL128 AFE search collapsed to zeros for %s; "
-                "restored gains=%s [%s] offsets=%s [%s]; "
-                "image colour may be degraded — recalibrate if quality is poor",
-                "/".join(collapsed),
-                result.gains, gain_src,
-                result.offsets, offset_src,
-            )
-        self.apply_frontend(result)
-        self.last_afe = result
-        final_means = measure(result)
-        logger.info(
-            "GL128 AFE search done gains=%s offsets=%s means=(%.0f,%.0f,%.0f) white_target=%#x planar=%s",
-            result.gains,
-            result.offsets,
-            final_means[0],
-            final_means[1],
-            final_means[2],
-            int(white_target),
-            self.usb_planar_rgb,
+            offsets,
         )
         return result
+
+    def _offsets_for_black(
+        self,
+        gains: tuple[int, int, int],
+        target: float,
+        timing: AfeStripTiming,
+        *,
+        fallback: tuple[int, int, int],
+        stage: str,
+    ) -> tuple[int, int, int]:
+        """Two-point optical-black probe at ``gains``; signed offsets for ``target``."""
+        black: list[tuple[float, float, float]] = []
+        for code in (AFE_OFFSET_PROBE_LOW, AFE_OFFSET_PROBE_HIGH):
+            self.apply_frontend(AfeFrontend(gains=gains, offsets=(code, code, code)))
+            black.append(optical_black_means(self.acquire_afe_strip(AFE_STRIP_BYTES, timing=timing)))
+        solved = offsets_for_black_level(black[0], black[1], target)
+        offsets = tuple(fallback[c] if v is None else v for c, v in enumerate(solved))
+        if None in solved:
+            logger.warning(
+                "GL128 AFE %s: optical black barely moved between offsets %#x and %#x "
+                "(%s -> %s); using SilverFast's codes %s on those channels",
+                stage,
+                AFE_OFFSET_PROBE_LOW,
+                AFE_OFFSET_PROBE_HIGH,
+                tuple(round(v) for v in black[0]),
+                tuple(round(v) for v in black[1]),
+                fallback,
+            )
+        return (offsets[0], offsets[1], offsets[2])
 
     def upload_shading_table(self, blob: bytes) -> None:
         """Write a packed shading coefficient blob to ``0x10014000``."""

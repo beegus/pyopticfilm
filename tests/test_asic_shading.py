@@ -528,42 +528,28 @@ def test_validate_color_shading_gains_band():
     assert "too dim" in reason
 
 
-def test_adaptive_afe_white_target_bright_probe_aims_sf_white():
+
+
+
+
+def test_coarse_gains_from_wide_means_match_silverfast():
     from pyopticfilm.scan.calib_gl128 import (
-        AFE_WHITE_TARGET_SF,
-        adaptive_afe_white_target,
-    )
-
-    assert adaptive_afe_white_target((33000, 35000, 38000)) == float(AFE_WHITE_TARGET_SF)
-    assert adaptive_afe_white_target((13000, 12000, 12500)) == float(AFE_WHITE_TARGET_SF)
-
-
-def test_adaptive_afe_white_target_dim_probe_raises():
-    from pyopticfilm.scan.calib_gl128 import (
-        AFE_WHITE_TARGET_SF,
-        adaptive_afe_white_target,
-    )
-
-    target = adaptive_afe_white_target((2000, 2100, 1900))
-    assert target > 2100
-    assert target < float(AFE_WHITE_TARGET_SF)
-
-
-def test_coarse_gains_from_wide_means_session_scale():
-    from pyopticfilm.scan.calib_gl128 import (
+        AFE_WHITE_TARGETS_IR,
         coarse_gains_from_wide_means,
     )
 
-    # Invert session-04-ish coarse (~38/30/36): mean ≈ 65535 - code*1155.
-    means = tuple(65535 - c * 1155 for c in (38, 30, 36))
-    assert coarse_gains_from_wide_means(means) == (38, 30, 36)
+    # SF wide-strip means (gain 0, pre-offsets) and the gains SF then wrote:
+    # 8200i SE Alignment_test, 8100 V2 06_ppi_ladder, 8300i SE 1800 colour + IR.
+    assert coarse_gains_from_wide_means((24768, 35190, 30620)) == (35, 25, 32)
+    assert coarse_gains_from_wide_means((27316, 39037, 33349)) == (31, 20, 28)
+    assert coarse_gains_from_wide_means((27028, 37931, 31495)) == (32, 22, 31)
+    assert coarse_gains_from_wide_means((32244, 27261, 28848), targets=AFE_WHITE_TARGETS_IR) == (28, 35, 33)
 
 
 def test_search_afe_codes_respects_code_min():
-    from pyopticfilm.scan.calib_gl128 import (
-        AFE_OFFSET_MIN,
-        search_afe_codes,
-    )
+    from pyopticfilm.scan.calib_gl128 import search_afe_codes
+
+    floor = 0x10
 
     def apply(codes: tuple[int, int, int]) -> tuple[float, float, float]:
         # Always above target so dichotomy keeps lowering toward code_min.
@@ -573,148 +559,20 @@ def test_search_afe_codes_respects_code_min():
     offsets = search_afe_codes(
         initial=(0x80, 0x80, 0x80),
         code_max=0xFF,
-        code_min=AFE_OFFSET_MIN,
+        code_min=floor,
         target=0x3000,
         iterations=9,
         tolerance=512.0,
         code_increases_mean=True,
         apply=apply,
     )
-    assert offsets == (AFE_OFFSET_MIN, AFE_OFFSET_MIN, AFE_OFFSET_MIN)
+    assert offsets == (floor, floor, floor)
 
 
-def test_colour_afe_uses_coarse_only_lamp_stays_on(monkeypatch):
-    import pyopticfilm.asic.gl128 as gl128_mod
-    from pyopticfilm.asic.gl128 import Gl128
-    from pyopticfilm.scan.calib_gl128 import (
-        AFE_OFFSET_MIN,
-        AFE_STRIP_PIXELS,
-        AFE_WIDE_PIXELS,
-        AfeSearchConfig,
-        coarse_gains_from_wide_means,
-    )
-
-    monkeypatch.setattr(gl128_mod.time, "sleep", lambda *_a, **_k: None)
-
-    calls: list[dict] = []
-
-    def fake_search(**kwargs):
-        calls.append(kwargs)
-        apply = kwargs["apply"]
-        apply(kwargs["initial"])
-        return (AFE_OFFSET_MIN, AFE_OFFSET_MIN + 1, AFE_OFFSET_MIN + 2)
-
-    monkeypatch.setattr(gl128_mod, "search_afe_codes", fake_search)
-
-    sample = (30000).to_bytes(2, "little")
-    strip = (sample * 3) * AFE_STRIP_PIXELS
-    wide = (sample * 3) * AFE_WIDE_PIXELS
-    expected_coarse = coarse_gains_from_wide_means((30000.0, 30000.0, 30000.0))
-
-    def _strip(size=AFE_STRIP_PIXELS * 6, **_k):
-        return wide if size >= len(wide) else strip
-
-    asic = Gl128(MagicMock(), MODEL_8200I_SE)
-    asic._initialized = True
-    asic.acquire_afe_strip = MagicMock(side_effect=_strip)
-    asic.apply_frontend = MagicMock()
-    asic.lamp_on = MagicMock()
-    asic.lamp_off = MagicMock()
-
-    result = asic.search_afe(config=AfeSearchConfig(iterations=1))
-    assert result.gains == expected_coarse
-    assert result.offsets == (AFE_OFFSET_MIN, AFE_OFFSET_MIN + 1, AFE_OFFSET_MIN + 2)
-    assert len(calls) == 1
-    assert calls[0]["code_min"] == AFE_OFFSET_MIN
-    # Signed offset search stays below the sign-magnitude negatives (>= 0x100).
-    assert calls[0]["code_max"] == 0xFF
-    asic.lamp_on.assert_called()
-    asic.lamp_off.assert_not_called()
 
 
-def test_colour_afe_zero_collapse_restores_coarse_and_session04(monkeypatch):
-    import pyopticfilm.asic.gl128 as gl128_mod
-    from pyopticfilm.asic.gl128 import Gl128
-    from pyopticfilm.scan.calib_gl128 import (
-        AFE_STRIP_PIXELS,
-        AFE_WIDE_PIXELS,
-        COLOR_AFE_SESSION04_OFFSETS,
-        AfeSearchConfig,
-        coarse_gains_from_wide_means,
-    )
-
-    monkeypatch.setattr(gl128_mod.time, "sleep", lambda *_a, **_k: None)
-
-    def fake_search(**kwargs):
-        apply = kwargs["apply"]
-        apply(kwargs["initial"])
-        return (0, 0, 0)
-
-    monkeypatch.setattr(gl128_mod, "search_afe_codes", fake_search)
-
-    sample = (28000).to_bytes(2, "little")
-    strip = (sample * 3) * AFE_STRIP_PIXELS
-    wide = (sample * 3) * AFE_WIDE_PIXELS
-    expected_coarse = coarse_gains_from_wide_means((28000.0, 28000.0, 28000.0))
-
-    def _strip(size=AFE_STRIP_PIXELS * 6, **_k):
-        return wide if size >= len(wide) else strip
-
-    asic = Gl128(MagicMock(), MODEL_8200I_SE)
-    asic._initialized = True
-    asic.acquire_afe_strip = MagicMock(side_effect=_strip)
-    asic.apply_frontend = MagicMock()
-    asic.lamp_on = MagicMock()
-    asic.lamp_off = MagicMock()
-
-    result = asic.search_afe(config=AfeSearchConfig(iterations=1))
-    assert result.gains == expected_coarse
-    assert result.offsets == COLOR_AFE_SESSION04_OFFSETS
-    asic.lamp_off.assert_not_called()
 
 
-def test_colour_afe_peg_near_max_falls_back_and_skips_strike(monkeypatch):
-    import pyopticfilm.asic.gl128 as gl128_mod
-    from pyopticfilm.asic.gl128 import Gl128
-    from pyopticfilm.scan.calib_gl128 import (
-        AFE_STRIP_PIXELS,
-        AFE_WIDE_PIXELS,
-        AfeSearchConfig,
-        coarse_gains_from_wide_means,
-    )
-
-    monkeypatch.setattr(gl128_mod.time, "sleep", lambda *_a, **_k: None)
-
-    def fake_search(**kwargs):
-        apply = kwargs["apply"]
-        apply(kwargs["initial"])
-        return (254, 254, 253)
-
-    monkeypatch.setattr(gl128_mod, "search_afe_codes", fake_search)
-
-    sample = (32000).to_bytes(2, "little")
-    strip = (sample * 3) * AFE_STRIP_PIXELS
-    wide = (sample * 3) * AFE_WIDE_PIXELS
-    expected_coarse = coarse_gains_from_wide_means((32000.0, 32000.0, 32000.0))
-
-    def _strip(size=AFE_STRIP_PIXELS * 6, **_k):
-        return wide if size >= len(wide) else strip
-
-    asic = Gl128(MagicMock(), MODEL_8200I_SE)
-    asic._initialized = True
-    asic.acquire_afe_strip = MagicMock(side_effect=_strip)
-    asic.apply_frontend = MagicMock()
-    asic.lamp_on = MagicMock()
-    asic.lamp_off = MagicMock()
-    asic._strike_lamp_on = MagicMock()
-
-    result = asic.search_afe(config=AfeSearchConfig(iterations=1))
-    assert result.gains == expected_coarse
-    assert result.offsets == (0x80, 0x80, 0x80)
-    assert asic.last_afe is result
-    asic.lamp_on.assert_called()
-    asic.lamp_off.assert_not_called()
-    asic._strike_lamp_on.assert_not_called()
 
 
 def test_stationary_data_ready_ignores_busy_accepts_home_not_empty(monkeypatch):
@@ -769,7 +627,7 @@ def test_acquire_afe_strip_waits_out_motor_busy_then_absolute_scan(monkeypatch):
     from pyopticfilm.asic.gl128 import Gl128
     from pyopticfilm.asic.registers import Gl128Registers
     from pyopticfilm.asic.status import ScannerStatus
-    from pyopticfilm.scan.calib_gl128 import AFE_STRIP_BYTES
+    from pyopticfilm.scan.calib_gl128 import AFE_STRIP_BYTES, AFE_STRIP_DUMMY_PRE
 
     monkeypatch.setattr(gl128_mod.time, "sleep", lambda *_a, **_k: None)
 
@@ -814,7 +672,8 @@ def test_acquire_afe_strip_waits_out_motor_busy_then_absolute_scan(monkeypatch):
         if c.args and int(c.args[0]) == r.REG_START and int(c.args[1]) & r.START_GO
     ]
     assert len(start_go) == 1
-    assert asic._reg_cache.get(0x2B) == MODEL_8200I_SE.shading_strip_clocks(1200, dvdset=False)[0]
+    # Default timing is SF's pre-offset narrow probe.
+    assert asic._reg_cache.get(0x2B) == AFE_STRIP_DUMMY_PRE
 
 
 def test_acquire_afe_strip_retries_start_after_data_timeout(monkeypatch):

@@ -485,8 +485,9 @@ word +16). The 8300i SE uploads SilverFast's table: the period
 | Shading DPISET | 1200 native (driver) | 1200 native | unknown | inconclusive |
 | AFE gain fields (`0x02`-`0x04`) | 6-bit PGA (driver) | 6-bit PGA, wraps at `0x40` (probed) | unknown | inconclusive |
 | AFE offset fields (`0x05`-`0x07`) | 9-bit sign-magnitude (driver) | 9-bit sign-magnitude, bit 8 = minus (probed) | unknown | inconclusive |
-| AFE white target (offset search) | adaptive, `0x3000` when bright (driver) | same | unknown | inconclusive |
-| Session-04 colour AFE offsets (R,G,B) | unknown (not extracted here) | `0x14`, `0x1F`, `0x17` | unknown | inconclusive |
+| AFE black target (optical black, columns 0-59 of the AFE strip) | `0x500` colour, 0 IR (SF capture pixel data) | same | unknown | same |
+| AFE gain law / white targets (R,G,B) | AD9826 `trunc(75.6 − 75.6·mean/target)`, colour 47000/53575/53575, IR 51800 (SF capture pixel data) | same | unknown | same |
+| SF colour AFE codes, 1800 full frame (gains; offsets) | `31/20/28`; `20/38/29` (06_ppi_ladder) | `35/25/32`; `15/23/19` (Alignment_test) | unknown | different (unit-specific) |
 | Shading blob destination | `0x10014000` | `0x10014000` | upload seen | same |
 | IR LED `0x37` bit 2 on IR pass | N/A (no IR) | set (`0xB0` → `0xB4` in session 05) | unknown | different |
 | `0x37` at boot / colour image | `0xC0` | `0xC0` | `0x21` at boot | different |
@@ -804,7 +805,6 @@ differ per unit (SE session 05: 6/16/12; 8300i capture: 28/35/33).
 
 - Full PPI ladder still missing **720** and **1440** (image clocks / feed2 / shading still nearest-band fills — known-unreliable after 900/1800 corrections)
 - Complete 7200 IR image capture (current with-IR file has no second image preamble)
-- AFE gain/offset search targets vs SE session-04 defaults
 - Product string / configuration descriptor from an in-tree capture (PID/`bcdDevice` are in the pcaps)
 
 Closed by hardware sign-off / expanded captures: cold-boot = SE `INIT_REGS`
@@ -812,6 +812,10 @@ Closed by hardware sign-off / expanded captures: cold-boot = SE `INIT_REGS`
 dummy/clock/feed2 corrected at 900/1800; CUSTOM slope ROM accepted on HW;
 edge green fringe / period-2 sawtooth fixed on HW at 1440/2400 (rounded
 `ld_shift` + host unstagger `(1, 0)`); `scan_ready=True`.
+
+Closed from capture pixel data, not yet hardware-verified: AFE gain/offset
+search targets (the SilverFast algorithm in the `calib_gl128` AFE block; the
+8300i SE PPI ladder fits the same targets as the SE and V2).
 
 ## Open capture gaps
 

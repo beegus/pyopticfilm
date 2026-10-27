@@ -21,6 +21,7 @@ import pyopticfilm.asic.gl128 as gl128_mod
 from pyopticfilm.asic.gl128 import Gl128
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.scan.calib_gl128 import (
+    AFE_WHITE_TARGETS_IR,
     AFE_WIDE_BYTES,
     AFE_WIDE_PIXELS,
     channel_means_u16,
@@ -30,6 +31,10 @@ from pyopticfilm.scan.calib_gl128 import (
 )
 
 GOLDEN = Path(__file__).parent / "data" / "gl128_afe_fe_writes.json"
+
+#: Every AFE strip starts with shielded optical-black pixels (columns 0-59 on
+#: real units); they read the same with the lamp on.
+OPTICAL_BLACK_PIXELS = 60
 
 #: Per-pixel profile: mild vignette so lag statistics look like real strips.
 _PROFILE = [0.85 + 0.15 * (1.0 - abs((x % 512) - 256) / 256.0) for x in range(16384)]
@@ -54,7 +59,7 @@ class FakeAd9826:
         code = self.regs.get(0x05 + c, 0)
         offset = -(code & 0xFF) if code & 0x100 else code & 0xFF
         gain = 6.0 / (6.0 - 5.0 * (self.regs.get(0x02 + c, 0) & 0x3F) / 63.0)
-        if self.lamp:
+        if self.lamp and x >= OPTICAL_BLACK_PIXELS:
             signal = (self.ir_white if self.infrared else self.white)[c] * _PROFILE[x]
         else:
             signal = 0.0
@@ -150,13 +155,13 @@ def test_afe_offset_capture_codes_decode_negative() -> None:
 
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 def test_search_afe_stays_inside_field_ranges(monkeypatch, name: str) -> None:
-    """No negative offset codes from the search and no gain past the 6-bit wrap."""
+    """Gains stay inside the 6-bit PGA and offsets inside the 9-bit sign-magnitude field."""
     writes = _run(monkeypatch, name)["writes"]
     for index, value in writes:
         if 0x02 <= index <= 0x04:
             assert value <= 0x3F, (index, value)
         if 0x05 <= index <= 0x07:
-            assert not value & 0x100, (index, value)
+            assert value <= 0x1FF, (index, value)
 
 
 def test_ir_search_reads_every_strip_under_the_ir_led(monkeypatch) -> None:
@@ -165,23 +170,25 @@ def test_ir_search_reads_every_strip_under_the_ir_led(monkeypatch) -> None:
     fake = FakeAd9826(white=spec["white"], ir_white=spec["ir_white"])
     asic = _make_asic(monkeypatch, fake)
     lighting: list[tuple[bool, bool, int]] = []
+    wide_strips: list[bytes] = []
     acquire = asic.acquire_afe_strip.side_effect
 
     def recording_acquire(size: int = 3072, **kw) -> bytes:
         lighting.append((fake.lamp, fake.infrared, int(size)))
-        return acquire(size, **kw)
+        data = acquire(size, **kw)
+        if int(size) == AFE_WIDE_BYTES:
+            wide_strips.append(data)
+        return data
 
     asic.acquire_afe_strip.side_effect = recording_acquire
     result = asic.search_afe(method="infrared")
 
     assert lighting and all(lamp and ir for lamp, ir, _size in lighting)
-    assert any(size == AFE_WIDE_BYTES for _lamp, _ir, size in lighting)
+    assert len(wide_strips) == 1
     asic.lamp_off.assert_not_called()
-    fake.regs.update({0x02: 0, 0x03: 0, 0x04: 0, 0x05: 0x80, 0x06: 0x80, 0x07: 0x80})
-    fake.lamp, fake.infrared = True, True
-    wide = fake.strip(AFE_WIDE_BYTES)
     assert result.gains == coarse_gains_from_wide_means(
-        channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False)
+        channel_means_u16(wide_strips[0], pixels=AFE_WIDE_PIXELS, planar=False),
+        targets=AFE_WHITE_TARGETS_IR,
     )
 
 
@@ -191,16 +198,137 @@ def test_afe_strip_decode_is_chunky_even_when_lag_test_says_planar(monkeypatch) 
     fake = FakeAd9826(white=(15000.0, 38000.0, 26000.0), ir_white=(0.0, 0.0, 0.0))
     fake.noise = random.Random(7)
     asic = _make_asic(monkeypatch, fake)
+    wide_strips: list[bytes] = []
+    acquire = asic.acquire_afe_strip.side_effect
 
-    fake.lamp = True
-    for index in (0x05, 0x06, 0x07):
-        fake.write_fe(index, 0x80)
-    wide = fake.strip(AFE_WIDE_BYTES)
+    def recording_acquire(size: int = 3072, **kw) -> bytes:
+        data = acquire(size, **kw)
+        if int(size) == AFE_WIDE_BYTES:
+            wide_strips.append(data)
+        return data
+
+    asic.acquire_afe_strip.side_effect = recording_acquire
+    result = asic.search_afe(method="transparency")
+
+    wide = wide_strips[0]
     expected = coarse_gains_from_wide_means(channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=False))
     blended = coarse_gains_from_wide_means(channel_means_u16(wide, pixels=AFE_WIDE_PIXELS, planar=True))
     assert len(set(expected)) == 3
-    assert max(blended) - min(blended) <= 1
+    assert result.gains == expected
+    assert result.gains != blended
 
-    fake.noise = random.Random(7)
+
+# --- SilverFast's coarse AFE algorithm (values from its own captures) ---------
+
+#: 8200i SE Alignment_test: optical black (columns 0-59) at offsets 0x80 / 0xFF.
+SF_SE_BLACK_GAIN0 = ((3526.0, 3380.0, 3425.0), (5491.0, 5427.0, 5482.0))
+SF_SE_BLACK_GAINED = ((5426.0, 4388.0, 5023.0), (10100.0, 8145.0, 9366.0))
+
+
+def test_offsets_for_black_level_reproduces_silverfast_codes() -> None:
+    from pyopticfilm.scan.calib_gl128 import (
+        AFE_BLACK_TARGET_COLOR,
+        AFE_PRE_OFFSET_BLACK,
+        offsets_for_black_level,
+    )
+
+    # Pre-offset at gain 0 (SF wrote -95/-82/-81) and black offsets at gains
+    # 35/25/32 (SF wrote 15/23/19, putting optical black at ~0x500).
+    pre = offsets_for_black_level(*SF_SE_BLACK_GAIN0, AFE_PRE_OFFSET_BLACK)
+    assert all(abs(o - s) <= 3 for o, s in zip(pre, (-95, -82, -81), strict=True))
+    assert offsets_for_black_level(*SF_SE_BLACK_GAINED, AFE_BLACK_TARGET_COLOR) == (15, 23, 19)
+
+
+def test_offsets_for_black_level_flags_a_flat_probe() -> None:
+    from pyopticfilm.scan.calib_gl128 import offsets_for_black_level
+
+    low = (3000.0, 3000.0, 65535.0)
+    high = (5000.0, 3001.0, 65535.0)
+    assert offsets_for_black_level(low, high, 1280)[1:] == (None, None)
+
+
+def test_optical_black_means_reads_only_the_shielded_columns() -> None:
+    from pyopticfilm.scan.calib_gl128 import AFE_STRIP_PIXELS, optical_black_means
+
+    pixels = [(1000, 2000, 3000) if 2 <= x < 56 else (60000, 60000, 60000) for x in range(AFE_STRIP_PIXELS)]
+    strip = b"".join(v.to_bytes(2, "little") for px in pixels for v in px)
+    assert optical_black_means(strip) == (1000.0, 2000.0, 3000.0)
+
+
+@pytest.mark.parametrize(
+    ("dpi", "narrow", "wide"), [(600, 10979, 13445), (2400, 10979, 13445), (3600, 11107, 16040), (7200, 11107, 16040)]
+)
+def test_afe_strip_timing_matches_silverfast(dpi: int, narrow: int, wide: int) -> None:
+    from pyopticfilm.scan.calib_gl128 import afe_strip_timing
+
+    pre = afe_strip_timing(dpi, wide=False, pre_offset=True)
+    after = afe_strip_timing(dpi, wide=True)
+    assert (pre.lperiod, pre.dummy) == (narrow, 0x02)
+    assert (after.lperiod, after.dummy) == (wide, 0x17)
+
+
+def test_search_afe_follows_silverfast_strip_sequence(monkeypatch) -> None:
+    """Two gain-0 probes (pre timing), the wide strip, then two probes at the new gains."""
+    spec = SCENARIOS["colour"]
+    fake = FakeAd9826(white=spec["white"], ir_white=spec["ir_white"])
+    asic = _make_asic(monkeypatch, fake)
+    seen: list[tuple[int, int, int, tuple[int, ...]]] = []
+    acquire = asic.acquire_afe_strip.side_effect
+
+    def recording_acquire(size: int = 3072, **kw) -> bytes:
+        t = kw["timing"]
+        seen.append((int(size), t.lperiod, t.dummy, tuple(fake.regs.get(i, 0) for i in (0x02, 0x05))))
+        return acquire(size, **kw)
+
+    asic.acquire_afe_strip.side_effect = recording_acquire
+    result = asic.search_afe(method="transparency", resolution=3600)
+
+    gain = result.gains[0]
+    assert seen == [
+        (3072, 11107, 0x02, (0, 0x80)),
+        (3072, 11107, 0x02, (0, 0xFF)),
+        (AFE_WIDE_BYTES, 16040, 0x17, (0, seen[2][3][1])),
+        (3072, 16040, 0x17, (gain, 0x80)),
+        (3072, 16040, 0x17, (gain, 0xFF)),
+    ]
+    assert asic.last_afe is result
+
+
+def test_search_afe_falls_back_per_channel_when_black_does_not_move(monkeypatch, caplog) -> None:
+    from pyopticfilm.scan.calib_gl128 import AFE_FALLBACK_OFFSETS_COLOR, AFE_FALLBACK_PRE_OFFSETS
+
+    spec = SCENARIOS["colour"]
+    fake = FakeAd9826(white=spec["white"], ir_white=spec["ir_white"])
+    asic = _make_asic(monkeypatch, fake)
+    acquire = asic.acquire_afe_strip.side_effect
+
+    def railed_red(size: int = 3072, **kw) -> bytes:
+        data = bytearray(acquire(size, **kw))
+        data[0::6] = b"\xff" * len(data[0::6])
+        data[1::6] = b"\xff" * len(data[1::6])
+        return bytes(data)
+
+    asic.acquire_afe_strip.side_effect = railed_red
     result = asic.search_afe(method="transparency")
-    assert all(abs(g - e) <= 1 for g, e in zip(result.gains, expected, strict=True))
+
+    assert decode_afe_offset(result.offsets[0]) == AFE_FALLBACK_OFFSETS_COLOR[0]
+    # Writes 12-17 program the pre-offsets (gains 0x02-0x04, then offsets 0x05-0x07).
+    assert fake.writes[15][0] == 0x05
+    assert decode_afe_offset(fake.writes[15][1]) == AFE_FALLBACK_PRE_OFFSETS[0]
+    assert "optical black barely moved" in caplog.text
+
+
+def test_afe_strip_regs_program_silverfast_timing() -> None:
+    from pyopticfilm.asic.registers import Gl128Registers
+    from pyopticfilm.scan.calib_gl128 import AfeStripTiming
+
+    r = Gl128Registers()
+    protocol = MagicMock()
+    asic = Gl128(protocol, MODEL_8200I_SE)
+    asic._setup_afe_strip_regs(wide=True, timing=AfeStripTiming(lperiod=13445, dummy=0x17))
+
+    u24 = {c.args[0]: c.args[1] for c in protocol.write_u24.call_args_list}
+    assert u24[r.REG_LPERIOD] == 13445
+    assert u24[r.REG_EXPOSURE] == MODEL_8200I_SE.exposure_lperiod
+    regs = asic._reg_cache
+    assert (regs[0x2B], regs[0xA3], regs[0xA6], regs[0xA7], regs[0xA8], regs[0xA9]) == (0x17, 0, 0, 1, 0, 1)

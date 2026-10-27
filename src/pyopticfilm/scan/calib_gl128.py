@@ -2,15 +2,17 @@
 """Capture-derived AFE search + ASIC shading table helpers for GL128 SE.
 
 Step 1 (offline): SilverFast choreography + shading pack/unpack.
-Step 2: dichotomy AFE search driven by strip means.
+Step 2: SilverFast's coarse AFE calibration (pre-offset, gains, black offsets).
 Step 3: build/upload ASIC shading at ``0x10014000`` (unity then measured).
-Pure functions only — hardware I/O lives on :class:`Gl128`.
+Pure functions only — hardware I/O lives on :class:`Gl128`. The dichotomy
+helpers further down serve GL845.
 
 See ``captures/8200i-se/CALIB.md`` and ``decoded/afe_shading_fixture.json``.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -98,26 +100,75 @@ AFE_GAIN_TARGET = 0xD000
 AFE_OFFSET_MAX = 0xFF
 AFE_GAIN_MAX = 0x3F
 AFE_DICHOTOMY_ITERS = 9
-#: Colour offset search floor — SF sessions 03/04 settle ~+18..+31; never walk to 0.
-AFE_OFFSET_MIN = 0x10
-#: Floor/ceiling when adapting the white target from the mid-offset probe.
-#: Floor is soft — :func:`adaptive_afe_white_target` may return the probe peak
-#: itself when that is below this (see implementation).
-AFE_WHITE_TARGET_MIN = 0x0800
-AFE_WHITE_TARGET_MAX = AFE_GAIN_TARGET
-#: Aim here when the ``0x80`` probe is already hot. Empirical: this lands offsets
-#: near SF's own codes (0x14, 0x1F, 0x17) and shading whites ~50k. It is *not*
-#: comparable to SF's own probe mean (~49.9k in sessions 03/04) — NegPy reads a
-#: different window and exposure. Raising it to match SF pegged the R offset at
-#: the top of its range and clipped the R dark term to 0.
-AFE_WHITE_TARGET_SF = 0x3000
-#: Session-04 colour offset fallback when the search collapses to zero.
-COLOR_AFE_SESSION04_OFFSETS: tuple[int, int, int] = (0x14, 0x1F, 0x17)
 #: Sign bit of the 9-bit sign-magnitude FE offset code (``0x05``-``0x07``).
 AFE_OFFSET_SIGN = 0x100
-#: Best-fit divisor for capture coarse gains: ``round((65535 - mean) / D)``.
-#: Fits sessions 03/04 within ±2 counts (CALIB.md); not a proven SF identity.
-AFE_GAIN_COARSE_DIVISOR = 1155
+
+# SilverFast's coarse AFE calibration, measured from the strip pixel data in its
+# own captures (8200i SE Alignment_test, 8100 V2 06/07, 8300i SE PPI ladder):
+#
+# 1. Pre-offset: gains 0, probe the narrow strip at offsets 0x80 and 0xFF, and
+#    put the optical-black columns just above 0 (PartB B4.2 "offset += -avg").
+# 2. Wide strip at gains 0 with those offsets; each gain is the AD9826 code
+#    ``trunc(75.6 - 75.6 * mean / target)`` (PartB B4.4) for a per-channel
+#    target.
+# 3. Probe again at 0x80/0xFF under the new gains and put optical black at the
+#    registry LINEDARK level: 0x500 for colour (Positive), 0 for IR (PositiveIR).
+#
+# Replaying 21 captured SF searches (17 colour, 4 IR; 600-7200 ppi, all three
+# models) through these functions gives SF's gain codes within 1 and its offset
+# codes within 3.
+
+#: The narrow AFE strip starts with shielded optical-black pixels (columns 0-59
+#: of the 512 on all three models); columns 2-55 stay clear of the edges.
+AFE_OPTICAL_BLACK_COLUMNS = slice(2, 56)
+#: The two offset codes SF probes to measure counts per offset step.
+AFE_OFFSET_PROBE_LOW = 0x80
+AFE_OFFSET_PROBE_HIGH = 0xFF
+#: Optical-black level for the gain measurement (pre-offset). SF lands black
+#: slightly above 0 here, ~+40 on average; 48 matches its codes within 3.
+AFE_PRE_OFFSET_BLACK = 48
+#: Optical-black level SF settles on before the dark strip.
+AFE_BLACK_TARGET_COLOR = 0x500
+AFE_BLACK_TARGET_IR = 0
+#: Wide-strip white targets for the AD9826 gain law (R, G, B).
+AFE_WHITE_TARGETS_COLOR: tuple[float, float, float] = (47000.0, 53575.0, 53575.0)
+AFE_WHITE_TARGETS_IR: tuple[float, float, float] = (51800.0, 51800.0, 51800.0)
+#: Below this many counts per offset step the two-point probe is unusable.
+AFE_MIN_COUNTS_PER_OFFSET = 4.0
+#: SF's own codes, used per channel only when a probe is unusable: 8200i SE
+#: pre-offsets, and the colour / IR black offsets of the 8200i SE and 8300i SE.
+AFE_FALLBACK_PRE_OFFSETS: tuple[int, int, int] = (-95, -82, -81)
+AFE_FALLBACK_OFFSETS_COLOR: tuple[int, int, int] = (15, 23, 19)
+AFE_FALLBACK_OFFSETS_IR: tuple[int, int, int] = (-31, -20, -28)
+
+#: SF AFE strip line periods ``(narrow, wide)``: one pair up to 2400 ppi, a
+#: longer one from 3600 ppi (identical on all three models).
+AFE_STRIP_LPERIOD_LOW: tuple[int, int] = (10979, 13445)
+AFE_STRIP_LPERIOD_HIGH: tuple[int, int] = (11107, 16040)
+AFE_STRIP_LPERIOD_HIGH_FROM_DPI = 3600
+#: ``0x2B`` for the pre-offset probes, and for the wide strip and later probes.
+AFE_STRIP_DUMMY_PRE = 0x02
+AFE_STRIP_DUMMY_WIDE = 0x17
+
+
+@dataclass(frozen=True)
+class AfeStripTiming:
+    """Line period and ``0x2B`` dummy for one AFE strip acquire."""
+
+    lperiod: int
+    dummy: int
+
+
+def afe_strip_timing(scan_dpi: int, *, wide: bool, pre_offset: bool = False) -> AfeStripTiming:
+    """SF's AFE strip timing for a scan at ``scan_dpi`` (ASIC dpi)."""
+    narrow_lp, wide_lp = (
+        AFE_STRIP_LPERIOD_HIGH
+        if int(scan_dpi) >= AFE_STRIP_LPERIOD_HIGH_FROM_DPI
+        else AFE_STRIP_LPERIOD_LOW
+    )
+    if pre_offset:
+        return AfeStripTiming(lperiod=narrow_lp, dummy=AFE_STRIP_DUMMY_PRE)
+    return AfeStripTiming(lperiod=wide_lp, dummy=AFE_STRIP_DUMMY_WIDE)
 
 
 def _u16_plane(strip: bytes, *, pixels: int) -> list[int]:
@@ -161,23 +212,6 @@ def choose_usb_planar(strip: bytes, *, pixels: int = AFE_STRIP_PIXELS) -> bool:
     return not (c3 > c1 + 0.08)
 
 
-def adaptive_afe_white_target(probe_means: Sequence[float]) -> float:
-    """Pick a reachable white target for the offset search from the ``0x80`` probe.
-
-    SF sessions 03/04 settle offsets *down* from ``0x80`` toward ~+20. If the
-    probe is already at/above ``AFE_WHITE_TARGET_SF``, aim there so dichotomy
-    lowers offsets. If the probe is dimmer (dark home), aim ~15% above the peak
-    so search can raise them.
-    """
-    peak = max(float(m) for m in probe_means) if probe_means else 0.0
-    if peak <= 0:
-        return float(AFE_WHITE_TARGET_MIN)
-    if peak >= float(AFE_WHITE_TARGET_SF):
-        return float(AFE_WHITE_TARGET_SF)
-    guessed = max(peak * 1.15, peak + 256.0)
-    return float(max(AFE_WHITE_TARGET_MIN, min(AFE_WHITE_TARGET_MAX, int(guessed))))
-
-
 def encode_afe_offset(value: int) -> int:
     """Signed offset (-255..+255) to the 9-bit sign-magnitude FE code."""
     v = max(-AFE_OFFSET_MAX, min(AFE_OFFSET_MAX, int(value)))
@@ -194,19 +228,62 @@ def decode_afe_offset(code: int) -> int:
 def coarse_gains_from_wide_means(
     means: Sequence[float],
     *,
-    divisor: int = AFE_GAIN_COARSE_DIVISOR,
+    targets: Sequence[float] = AFE_WHITE_TARGETS_COLOR,
     gain_max: int = AFE_GAIN_MAX,
 ) -> tuple[int, int, int]:
-    """Capture coarse PGA gains: ``round((65535 - mean) / divisor)``.
+    """AD9826 PGA codes that bring wide-strip ``means`` (taken at gain 0) to ``targets``.
 
-    Matches sessions 03/04 within a couple of counts (CALIB.md).
+    ``code = trunc(75.6 - 75.6 * mean / target)``, the inverse of the AD9826 law
+    ``gain = 6 / (6 - 5 * code / 63)`` (PartB B4.4). The wide strip must be
+    taken with optical black near 0 so ``mean`` is signal only.
     """
-    if len(means) != 3:
-        raise ValueError("means must be length-3 RGB")
+    if len(means) != 3 or len(targets) != 3:
+        raise ValueError("means and targets must be length-3 RGB")
     out: list[int] = []
-    for mean in means:
-        code = round((65535.0 - float(mean)) / float(divisor))
+    for mean, target in zip(means, targets, strict=True):
+        code = math.floor(75.6 - 75.6 * float(mean) / float(target))
         out.append(max(0, min(int(gain_max), code)))
+    return (out[0], out[1], out[2])
+
+
+def optical_black_means(strip: bytes) -> tuple[float, float, float]:
+    """Mean R/G/B of the optical-black columns of a narrow (chunky) AFE strip."""
+    cols = range(AFE_STRIP_PIXELS)[AFE_OPTICAL_BLACK_COLUMNS]
+    need = cols.stop * 6
+    if len(strip) < need:
+        raise ValueError(f"strip too short for optical black: {len(strip)} < {need}")
+    sums = [0, 0, 0]
+    for x in cols:
+        base = x * 6
+        for c in range(3):
+            sums[c] += int.from_bytes(strip[base + 2 * c : base + 2 * c + 2], "little")
+    n = len(cols)
+    return (sums[0] / n, sums[1] / n, sums[2] / n)
+
+
+def offsets_for_black_level(
+    low: Sequence[float],
+    high: Sequence[float],
+    target: float,
+    *,
+    low_code: int = AFE_OFFSET_PROBE_LOW,
+    high_code: int = AFE_OFFSET_PROBE_HIGH,
+) -> tuple[int | None, int | None, int | None]:
+    """Signed offsets that put optical black at ``target``, from a two-point probe.
+
+    ``low``/``high`` are optical-black means at offset codes ``low_code`` and
+    ``high_code`` under the same gains. A channel whose probe is unusable (too
+    little response, e.g. a railed strip) is ``None``.
+    """
+    out: list[int | None] = []
+    steps = float(high_code - low_code)
+    for lo, hi in zip(low, high, strict=True):
+        per_code = (float(hi) - float(lo)) / steps
+        if per_code < AFE_MIN_COUNTS_PER_OFFSET:
+            out.append(None)
+            continue
+        value = round(low_code + (float(target) - float(lo)) / per_code)
+        out.append(max(-AFE_OFFSET_MAX, min(AFE_OFFSET_MAX, value)))
     return (out[0], out[1], out[2])
 
 
