@@ -21,8 +21,7 @@ def run_gl128_setup(
     """ASIC ``init`` + ``Gl128ScanSession._configure`` (motors gated; no bulk image).
 
     Default area is a short top crop so full-frame LINCNT gates do not fire and
-    the register program stays comparable across SE (feed2 13704) and V2
-    (feed2 13128) at 7200 dpi.
+    the register program stays comparable across models at 7200 dpi.
     """
     transport = usb if usb is not None else MockScannerTransport()
     proto = GenesysUsbProtocol(transport)

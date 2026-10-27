@@ -131,7 +131,7 @@ def image_feed2_steps(
     """Second-feed steps for an image pass.
 
     Prefer ``geometry.area``. If that tuple was dropped, reconstruct from
-    ``area_y1`` so a crop does not fall back to full-frame ``13704``.
+    ``area_y1`` so a crop does not fall back to the full-frame feed2.
     Full-frame (no crop) uses :meth:`~Gl128Common.feed_to_scan_steps_for_dpi`
     when available so PPI-dependent leaves (8300i SE) match captures.
     """

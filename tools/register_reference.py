@@ -70,6 +70,7 @@ from enum import Enum
 
 from pyopticfilm.device.model_8100_v2 import MODEL_8100_V2
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
+from pyopticfilm.device.model_8300i_se import MODEL_8300I_SE
 
 
 class Confidence(str, Enum):
@@ -80,7 +81,7 @@ class Confidence(str, Enum):
 
 
 class AsicFamily(str, Enum):
-    GL128 = "gl128"  # 8100 V2, 8200i SE
+    GL128 = "gl128"  # 8100 V2, 8200i SE, 8300i SE
     GL845 = "gl845"  # legacy/other models
     # Future families: add a new member here, never repurpose an existing one.
 
@@ -93,12 +94,13 @@ SCOPE_ALL_GL128 = "gl128-shared"
 SCOPE_ALL_GL845 = "gl845-shared"
 SCOPE_8100_V2 = MODEL_8100_V2.name
 SCOPE_8200I_SE = MODEL_8200I_SE.name
+SCOPE_8300I_SE = MODEL_8300I_SE.name
 
 #: Every scope string this catalog is allowed to use — the shared markers
 #: plus every real model's own identity. A test asserts every entry's scope
 #: is a subset of this, so a typo'd scope string fails immediately.
 KNOWN_SCOPES: frozenset[str] = frozenset(
-    {SCOPE_ALL_GL128, SCOPE_ALL_GL845, SCOPE_8100_V2, SCOPE_8200I_SE}
+    {SCOPE_ALL_GL128, SCOPE_ALL_GL845, SCOPE_8100_V2, SCOPE_8200I_SE, SCOPE_8300I_SE}
 )
 
 
@@ -331,8 +333,8 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         scope=(SCOPE_ALL_GL128,),
         meaning=(
             "LAMPPWR=0x10 (white lamp), XPASEL=0x20 (held for every "
-            "transparency operation), AVEENB=0x40 (held during lamp-on). IR "
-            "passes clear LAMPPWR and keep XPASEL."
+            "transparency operation), AVEENB=0x40 (never set: lamp-on writes "
+            "0x30, lamp-off 0x20). IR passes clear LAMPPWR and keep XPASEL."
         ),
         confidence=Confidence.CONFIRMED,
         citations=_c("registers.py Gl128Registers", "gl128.py lamp_on/lamp_off/_strike_lamp_on"),
@@ -400,7 +402,11 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         name="REG_LINCNT",
         asic=AsicFamily.GL128,
         scope=(SCOPE_ALL_GL128,),
-        meaning="24-bit BE line count, native 7200 dpi units.",
+        meaning=(
+            "24-bit BE line count: (image lines + extra lines) × "
+            "image_lincnt_per_line (4 on the 8200i SE / 8100 V2, 1 on the "
+            "8300i SE). Not native 7200 dpi units."
+        ),
         confidence=Confidence.CONFIRMED,
         citations=_c("registers.py Gl128Registers"),
     ),
@@ -535,8 +541,10 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         asic=AsicFamily.GL128,
         scope=(SCOPE_ALL_GL128,),
         meaning=(
-            "Not in Gl128Registers or any per-DPI table; pyopticfilm always "
-            "writes 0x80 (SCAN_REGS) regardless of DPI.\n\n"
+            "Not in Gl128Registers. pyopticfilm writes 0x80 (SCAN_REGS) for "
+            "every pass except the 7200dpi image pass, which gets 0x81 like "
+            "SilverFast (session_gl128.py _IMAGE_REG_1D_LOW_BY_DPI, #98). "
+            "Shading strips and positioning feeds stay 0x80.\n\n"
             "CORRECTED 2026-09-11: this entry previously claimed the flip "
             "happens 'only for the 7200dpi image pass ... never during "
             "shading'. An independent re-decode (tools/capture_ledger.py, "
@@ -635,14 +643,15 @@ REGISTERS: tuple[RegisterEntry, ...] = (
             "HARDWARE INCIDENT (2026-09-10, unresolved): setting bit 0 of "
             "0x1D for a 7200dpi image pass on real 8100 V2 hardware was "
             "immediately followed by a motor jam requiring a hard power-off "
-            "mid-scan. The experimental_reg1d_7200 flag and its CLI/session "
-            "plumbing that made this reachable have been removed entirely — "
-            "there is intentionally no way to set this bit from pyopticfilm "
-            "today. Do not reintroduce any path to setting this bit (or "
-            "otherwise touching 0x1D from its SCAN_REGS default) without new "
-            "capture or bench evidence establishing it's safe, isolating "
-            "this one change from everything else per the 0x3D-0x3F FEEDL "
-            "incident's own lesson."
+            "mid-scan. The experimental_reg1d_7200 flag was removed. #98 "
+            "later shipped 0x81 for the 7200dpi image pass together with "
+            "SilverFast's doubled per-channel exposure table, and that "
+            "combination scans cleanly on all three models. The shading "
+            "values (0x81 at 3600dpi, 0x82/0x83 at 7200dpi) and the 0x81 "
+            "SilverFast writes on 7200dpi positioning feeds are still not "
+            "replicated. Do not set them without new bench evidence that "
+            "isolates the change, per the 0x3D-0x3F FEEDL incident's own "
+            "lesson."
         ),
     ),
     RegisterEntry(
@@ -751,8 +760,8 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         addr="0x37",
         name="REG_IR",
         asic=AsicFamily.GL128,
-        scope=(SCOPE_8200I_SE,),
-        meaning="Bit 2 (IR_LED=0x04) enables the infrared LED, read-modify-write. The 8100 V2 has no infrared channel (supports_infrared=False) — this register is presumably unused/unwritten on V2, not independently verified either way.",
+        scope=(SCOPE_8200I_SE, SCOPE_8300I_SE),
+        meaning="Bit 2 (IR_LED=0x04) enables the infrared LED, read-modify-write, on the 8200i SE and 8300i SE (SilverFast 8300i SE PPI-ladder IR passes write 0xB4/0xF4). The 8100 V2 has no infrared channel (supports_infrared=False) — this register is presumably unused/unwritten on V2, not independently verified either way.",
         confidence=Confidence.CONFIRMED,
         citations=_c("registers.py Gl128Registers", "gl128.py _apply_infrared (session 05: read 0xB0, write 0xB4)"),
     ),
@@ -817,7 +826,7 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         name="REG_FEEDL — V2 full-frame second-feed distance",
         asic=AsicFamily.GL128,
         scope=(SCOPE_8100_V2,),
-        meaning="V2's full-frame colour scan starts its second feed at 13128 steps (top of the TA window), vs the SE default of 13704.",
+        meaning="V2's full-frame colour scan starts its second feed at 13128 steps (top of the TA window), the same as the 8200i SE default (the SE's older 13704 came from the session 04 crop).",
         confidence=Confidence.CONFIRMED,
         citations=_c(
             "device/model_8100_v2.py module docstring, items 1 and 5 — "

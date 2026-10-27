@@ -52,7 +52,10 @@ model methods. It must not branch on model identity.
    capture of the vendor driver. Each constant names the capture (file,
    session, frame and register bytes) that proves it. When a table mixes
    measured and inferred entries, mark each entry `# measured` or
-   `# filled (...)`, as the 8300i SE tables do.
+   `# filled (...)`, as the 8300i SE tables do. Paths of the form
+   `captures/<model>/<session>/...` in code comments refer to the
+   [pyopticfilm_captures](https://github.com/jboneng/pyopticfilm_captures)
+   dataset, which is a separate repository, not a folder in this one.
 2. **Leaves subclass the family base, never each other.** `Model8100V2` and
    `Model8300iSE` subclass `Gl128Common`, not `Model8200iSE`, so a fix to one
    model's constants cannot reach another model through inheritance. Each
@@ -62,7 +65,11 @@ model methods. It must not branch on model identity.
    importing the SE table and called `self.model.slope_table_fast()` instead.
    Each leaf returns its own table. Do not add `if model.usb_product_id == ...`,
    `isinstance(model, Model<Name>)` or `getattr(model, "new_knob", default)` to
-   family code.
+   family code. Older GL128 code does not follow this yet: `asic/gl128.py` and
+   `scan/session_gl128.py` still read about 35 model knobs through `getattr`
+   with a fallback (for example `image_read_chunk_bytes`, the `me_*` fields and
+   `shading_strip_clocks`). Don't copy that pattern. When you touch one of those
+   lines, read the attribute directly; the knob is already on `Gl128Model`.
 4. **New knobs are required, not optional.** Add the field or method to the
    `<Family>Model` protocol and either declare it on every leaf or give it one
    shared value in the family base. A default that silently copies one model's
