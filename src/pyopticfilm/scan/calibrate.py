@@ -626,6 +626,35 @@ class Calibrator:
             )
         return ready
 
+    def _gl128_infrared_entry(self, geometry: ScanGeometry) -> CalibEntry:
+        """Public GL128 IR calibration: :meth:`measure_ir_host_flatten`, as a :class:`CalibEntry`.
+
+        The entry reports the IR white profile (IR dark terms are 0) and the IR
+        AFE codes. It is not cached; every IR pass re-measures before it scans.
+        """
+        if not self.measure_ir_host_flatten(geometry):
+            raise CalibrationError(
+                "GL128 infrared calibration failed (IR AFE search or IR white strip "
+                "rejected); see the log. IR scans fall back to the per-image flatten."
+            )
+        pixels = int(geometry.pixels)
+        white = np.zeros((pixels, 3), dtype=np.uint16)
+        profile = list(getattr(self.asic, "last_ir_host_white", None) or [])[:pixels]
+        if profile:
+            white[: len(profile)] = np.asarray(profile, dtype=np.uint16)[:, None]
+        afe = getattr(self.asic, "last_afe", None)
+        return CalibEntry(
+            method="infrared",
+            resolution=int(geometry.resolution),
+            startx=int(geometry.startx),
+            pixels=pixels,
+            dark=np.zeros((pixels, 3), dtype=np.uint16),
+            white=white,
+            calibrated_at=time.time(),
+            afe_offsets=None if afe is None else tuple(afe.offsets),
+            afe_gains=None if afe is None else tuple(afe.gains),
+        )
+
     def _apply_host_afe(self, entry: CalibEntry) -> None:
         """Re-apply cached FE codes so image configure matches the calib strips."""
         if self.asic is None:
@@ -715,6 +744,10 @@ class Calibrator:
         # Match scan geometry keys so apply is 1:1 for full-TA (or given area).
         scan_geo = geometry if geometry is not None else compute_geometry(resolution, model=self.model, area=area)
         resolution = scan_geo.resolution
+        if method == "infrared" and getattr(self.model, "asic", "") == "GL128":
+            # GL128 IR is the calibration every IR scan runs before its IR pass
+            # (IR AFE + IR white strip). It is never cached: the IR pass re-measures.
+            return self._gl128_infrared_entry(scan_geo)
         existing = self.cache.find(
             method=method,
             resolution=resolution,
