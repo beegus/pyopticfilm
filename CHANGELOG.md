@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **GL128 IR white strip is read moving, like SilverFast's** (8200i SE, 8300i SE). SilverFast reads the IR white strip like the colour one: DVDSET armed on a unity table with zero dark terms, and the motor running. pyopticfilm read it stationary at home, so anything sitting on the white reference at that one spot went into the IR column profile. It now uses the colour white strip's path (unity table, `MTRPWR|AGOHOME`, parks after). The IR plane is unchanged on the 8200i SE (fine streaking 0.290% vs 0.29%).
+  - **IR DVDSET stays off, unlike SilverFast.** SilverFast also arms DVDSET for the IR image pass with a per-pixel IR table. That was tried and measured on the 8200i SE: no clipping (the 2026-08 reason for turning it off no longer applies), but the per-pixel table imprints the white strip's column structure, about 1.4–1.8× the fine vertical streaking of the host flatten. The IR plane keeps the host flatten.
 - **GL128 positioning feeds run under the image pass's registers, as SilverFast's do** (8200i SE, 8100 V2, 8300i SE).
   - **SilverFast.** It programs the scan's own registers before both positioning feeds, on every model and PPI: DPISET, pixel clocks, LPERIOD, window, exposure, `0x1D` and the depth pair `0x33`/`0xAF`. The feed itself only sets `0x01=0x22`, `0x05=0x48`, `0x02=0x18`, the feed length and `0xAF` (`0x7F` for the reference feed, `0xFF` for the scan-start feed).
   - **Before.** pyopticfilm used a fixed recipe: DPISET 200, clocks `02`, exposure 14000 even on the 8300i SE, and `0x33=0x04` against `0xAF=0xFF`. #102 showed `0xAF` changes the actual feed distance, and `0x33` is its partner.
