@@ -45,6 +45,26 @@ GL128_OPTICAL_REGISTER_KEYS: tuple[int, ...] = (
     0xAB,  # pixel clock
 )
 
+#: Per-scan sensor timing (``sensor_custom_regs``) and ``0x1D``. These differ
+#: per model (8300i SE overlay) and per dpi (``0x1D=0x81`` at 7200).
+GL128_SENSOR_REGISTER_KEYS: tuple[int, ...] = (
+    0x06,
+    0x0B,
+    0x1D,
+    0x52,
+    0x53,
+    0x54,
+    0x55,
+    0x56,
+    0x57,
+    0x5A,
+    0x5B,
+    0x70,
+    0x71,
+    0x72,
+    0x73,
+)
+
 # Optical / scan-setup registers compared against SANE (not the full boot blast).
 OPTICAL_REGISTER_KEYS: tuple[int, ...] = (
     0x01,  # SCAN / SHDAREA / DVDSET

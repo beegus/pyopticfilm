@@ -98,7 +98,7 @@ class FilmModel(Protocol):
 
 @runtime_checkable
 class Gl128Model(FilmModel, Protocol):
-    """Required knobs for GL128 scan-ready models (8200i SE and 8100 V2).
+    """Required knobs for GL128 scan-ready models (8200i SE, 8100 V2, 8300i SE).
 
     Shared-session / ASIC code must read these as real attributes — do not
     introduce ``getattr(model, "new_knob", se_default)`` for GL128-specific

@@ -13,8 +13,8 @@ Differences from :class:`~pyopticfilm.asic.gl845.Gl845` that matter here:
   bit layout is the same;
 * the analog frontend is written through ``0x51``/``0x5D``/``0x5E``;
 * the white lamp is ``0x03`` bit 4 and infrared is ``0x37`` bit 2 set by
-  read-modify-write (``0x03`` bit 5 / ``AVEENB`` is held during lamp-on as in
-  the captures);
+  read-modify-write; ``0x03`` bit 5 (``XPASEL``) stays set for every
+  transparency operation and ``AVEENB`` (``0x40``) is never set;
 * positioning is two capture-constant feeds from home, then the image pass
   runs with ``FEEDL=1`` and ``AGOHOME`` so the carriage parks afterwards —
   see ``captures/8200i-se/MOTOR.md``.
@@ -88,8 +88,9 @@ IR_AFE_FALLBACK_OFFSETS: tuple[int, int, int] = (0x30, 0x29, 0x31)
 IR_AFE_HEALTHY_MEAN = 8000
 
 BRINGUP_HINT = (
-    "GL128 (OpticFilm 8200i SE / 8100 V2) support is derived from USB captures "
-    "of the Windows driver rather than from SANE — see docs/gl128-bringup.md."
+    "GL128 (OpticFilm 8200i SE / 8100 V2 / 8300i SE) support is derived from "
+    "USB captures of the Windows driver rather than from SANE — see "
+    "docs/gl128-model-comparison.md."
 )
 
 #: Raised when code deliberately disarms the motor (e.g. stationary shading).
@@ -1687,8 +1688,9 @@ class Gl128:
     ) -> None:
         """From home: feed to reference, then to the scan-start line.
 
-        Replays ``28292`` then ``scan_steps`` (default session-04 full-frame
-        ``13704``; crop-dependent values from session 09). Requires home.
+        Replays ``28292`` then ``scan_steps`` (default the model's full-frame
+        feed2, ``13128`` on the SE/V2; crops map ``y1`` into the scan window).
+        Requires home.
         """
         self._require_motor_enabled()
         if not getattr(self, "_park_ok", True):

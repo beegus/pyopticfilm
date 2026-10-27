@@ -84,7 +84,7 @@ class Gl128Registers:
     REG_0x03: int = 0x03
     REG_CLRCNT: int = 0x0D  # write 0x07 to clear line/motor/feed counters
     REG_START: int = 0x0F  # write 0x01 to launch the configured operation
-    REG_LINCNT: int = 0x25  # 24-bit BE, in native (7200 dpi) lines
+    REG_LINCNT: int = 0x25  # 24-bit BE, lines x image_lincnt_per_line (not 7200 dpi units)
     REG_LPERIOD: int = 0x28  # 24-bit BE line exposure period
     REG_DPISET: int = 0x2C  # 16-bit BE, equals dpi / 6
     REG_DEPTH_A: int = 0x33  # 0x04 = 16-bit output, 0x1F = 8-bit

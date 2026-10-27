@@ -7,15 +7,14 @@ The 8100 V2 (``07b3:1824``) uses the GL128 ASIC and is closely related to the
 **not** :class:`~pyopticfilm.device.model_8200i_se.Model8200iSE`, so SE capture
 constants cannot leak through inheritance.  Five constants differ from the SE,
 all derived from USB captures of the V2 Windows driver (capture session Aug
-2026).
+2026); the ASIC clock and ``0x0B`` boot values on the class differ as well.
 
-**feed_to_scan_steps = 13 128**
+**feed_to_scan_steps = 13 128** (same as the SE today)
     The V2's full-frame colour scan starts at the top of the TA window (second
-    feed = 13 128 steps from the reference position), not the SE default of
-    13 704.  The SE documents 13 128 as ``feed_to_scan_top_steps`` — the
-    top-of-window preview position used in session 03.  Using the SE default
-    (13 704) on V2 hardware positions the scan head 576 steps (~1 mm) too deep,
-    clipping ~1 mm at the top of the 35 mm film frame.
+    feed = 13 128 steps from the reference position).  The SE originally used
+    13 704 from its session 04 crop, which positions the scan head 576 steps
+    (~1 mm) too deep; the SE now uses 13 128 as well, so this is declared on
+    both leaves rather than being a V2 difference.
     *Capture evidence*: ``04_color_7200.pcapng`` frame 2999, registers
     0x3D–0x3F = 0x00 0x33 0x48 = 13 128.
 
@@ -139,7 +138,7 @@ _STAGGER_BY_DPI_8100_V2: dict[int, tuple[int, ...]] = {
 class Model8100V2(Gl128Common):
     """OpticFilm 8100 V2 — GL128 sibling of the 8200i SE without IR.
 
-    See module docstring for the six capture-derived overrides.
+    See module docstring for the five capture-derived overrides.
     """
 
     name: str = "plustek-opticfilm-8100-v2"

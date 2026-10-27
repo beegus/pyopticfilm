@@ -13,6 +13,7 @@ from pyopticfilm.device.model_8300i_se import MODEL_8300I_SE
 from scanners.setup_gl128 import run_gl128_setup
 from scanners.trace_compare import (
     GL128_OPTICAL_REGISTER_KEYS,
+    GL128_SENSOR_REGISTER_KEYS,
     compare_registers,
     load_trace,
 )
@@ -56,5 +57,9 @@ def test_gl128_setup_matches_golden_registers(folder, model, dpi):
     usb, _geo = run_gl128_setup(model, dpi=dpi)
     golden = load_trace(golden_path)
     written = {addr: val & 0xFF for addr, val in usb.registers.items()}
-    diff = compare_registers(golden.registers, written, keys=GL128_OPTICAL_REGISTER_KEYS)
+    diff = compare_registers(
+        golden.registers,
+        written,
+        keys=GL128_OPTICAL_REGISTER_KEYS + GL128_SENSOR_REGISTER_KEYS,
+    )
     assert diff is None, diff
