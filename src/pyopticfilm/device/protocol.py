@@ -141,6 +141,7 @@ class Gl128Model(FilmModel, Protocol):
     feed_to_scan_bottom_steps: int
     max_feed_steps: int
     scan_window_end_steps: int
+    max_travel_end_steps: int
     max_image_lincnt_by_feed2: Mapping[int, int]
     asic_clock_boot_0x8c: int
     asic_clock_scan_0x8c: int
@@ -200,6 +201,8 @@ class Gl128Model(FilmModel, Protocol):
     def max_travel_steps_for_feed2(self, feed2: int) -> int: ...
 
     def max_lincnt_for(self, feed2: int, resolution: int) -> int: ...
+
+    def max_safe_lincnt_for(self, feed2: int, resolution: int) -> int: ...
 
     def travel_mm_for_lincnt(self, lincnt: int, resolution: int) -> float: ...
 

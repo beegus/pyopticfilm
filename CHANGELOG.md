@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **GL128 default full-frame scans at 1440 ppi (8200i SE, 8100 V2) and 7200 ppi (8100 V2) raised `ScanError`** (`Image LINCNT 5804 at 1440 dpi … past the 48.7 mm scan-window end`). The image-pass motor gate stopped every scan at `scan_window_end_steps` (27636), but SilverFast's own full frames run up to 12 steps further: the 8100 V2 captures scan LINCNT 5804 at 1440 ppi and end at 27648 at 600 and 720 ppi. The gate now uses that limit, `max_travel_end_steps` (27648), through the new `max_safe_lincnt_for`. Every SilverFast full-frame LINCNT on the three models fits, and anything longer is still refused. Crop sizing in Scan Lab keeps the scan-window end, so crops and the Full window are unchanged.
+
 ## [1.3.8] - 2026-10-26
 
 ### Added

@@ -342,6 +342,7 @@ GL128_SHARED_FIELDS: frozenset[str] = frozenset(
         "feed_to_scan_bottom_steps",
         "max_feed_steps",
         "scan_window_end_steps",
+        "max_travel_end_steps",
         "motor_profile",
         "init_regs",
         "frontend_regs",
@@ -451,6 +452,11 @@ class Gl128Common:
     feed_to_scan_bottom_steps: int = 20232
     max_feed_steps: int = 28292
     scan_window_end_steps: int = 27636
+    #: Furthest carriage position (steps from home) SilverFast drives an image
+    #: pass to: 8100 V2 ``06_ppi_ladder`` full frames at 600/720 ppi end at
+    #: 13128 + 14520 = 27648. Only the image-pass motor gate uses it; crop
+    #: sizing keeps :attr:`scan_window_end_steps`.
+    max_travel_end_steps: int = 27648
     motor_profile: MotorProfile = DEFAULT_GL845_MOTOR
     init_regs: Mapping[int, int] = field(default_factory=lambda: dict(INIT_REGS))
     frontend_regs: Mapping[int, int] = field(default_factory=lambda: dict(FRONTEND_REGS))
@@ -625,8 +631,22 @@ class Gl128Common:
 
     def max_lincnt_for(self, feed2: int, resolution: int) -> int:
         """Largest image ``LINCNT`` that still stops at the scan-window end."""
+        return self._lincnt_for_travel_steps(
+            self.max_travel_steps_for_feed2(feed2), resolution
+        )
+
+    def max_safe_lincnt_for(self, feed2: int, resolution: int) -> int:
+        """Largest image ``LINCNT`` within the travel SilverFast itself uses.
+
+        The motor gate for image passes. Looser than :meth:`max_lincnt_for` by
+        the 12 steps SilverFast's own full frames run past the scan-window end
+        (1440 ppi LINCNT 5804, 7200 ppi 29012 at feed2 13128).
+        """
+        steps = max(0, int(self.max_travel_end_steps) - int(feed2))
+        return self._lincnt_for_travel_steps(steps, resolution)
+
+    def _lincnt_for_travel_steps(self, steps: int, resolution: int) -> int:
         asic_dpi = self.asic_dpi_for(resolution)
-        steps = self.max_travel_steps_for_feed2(feed2)
         raw = (
             steps * asic_dpi * int(self.image_lincnt_per_line)
         ) // int(self.feed_steps_per_inch)
