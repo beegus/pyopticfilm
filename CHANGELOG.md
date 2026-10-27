@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Multi-exposure long pass metered the film holder** (8200i SE, 8100 V2, 8300i SE). The adaptive long exposure targets the 5th percentile of the short pass, taken over the whole frame. The default one-inch frame carries about 5 % near-black holder rows and columns, which is right at that percentile, so the proposal was set by the holder and went to the 85000 cap.
+  - **Hardware.** 8200i SE, 900 ppi default frame: 38 holder rows and 12 columns read near black (5.4 % of pixels), and the proposal was 603448. Metering inside the frame gives blue p05 ≈ 1150 DN and a proposal of about 120000. That negative is dense enough to need the cap either way; a thinner one now gets the exposure its film asks for instead of the cap.
+  - **Now.** The selector meters inside the same 4 % border inset the film-base makeup already uses.
+
 - **GL128 AFE gains changed with sensor temperature and idle time** (8200i SE, 8100 V2, 8300i SE; [#124](https://github.com/jboneng/pyopticfilm/issues/124)). The first AFE search after power-up gave pre-offsets around `-25` and gains 2–3 codes lower than later sessions (`-105`, `35/25/32` on an 8200i SE).
   - **Cause.** The AFE search first reads the sensor's shielded optical-black pixels at gain 0. The first line after the CCD has sat unclocked carries the charge it gathered meanwhile, so it reads high. On a warm 8200i SE the error grows with idle time: +60 counts after 0.2 s, +270 after 1 s, +590 after 10 s. It is smaller on a cold sensor, so the result depended on both. SilverFast probes the same way; its captures were taken warm and show the "after idle" reading.
   - **Fix.** The search now clocks one throwaway strip before it probes, so the probe reads true black every time. The white targets for the gain step are scaled so that this settled measurement lands on SilverFast's warm gains. The scale comes from wide-strip means measured both ways on the 8200i SE. SilverFast's own targets are kept as `AFE_SF_WHITE_TARGETS_*`.
