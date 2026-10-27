@@ -217,6 +217,11 @@ _DRAM_ENABLE = 0x08
 _REG_0x13 = 0x13
 _DRAM_INIT_0x13 = 0x0F
 
+#: ``0xA6``-``0xA9`` on every calibration strip (AFE, dark, white): SilverFast
+#: writes ``00 01 00 01`` in every capture (all three models, 600-7200 ppi,
+#: colour and IR); feeds and the image pass get ``00 00 00 00`` from the boot map.
+_CALIB_STRIP_A6_A9: dict[int, int] = {0xA6: 0x00, 0xA7: 0x01, 0xA8: 0x00, 0xA9: 0x01}
+
 #: Image cancel / end-scan lamp writes on ``0x03`` (sessions 03 return-home,
 #: 08b/08c Cancel). Pre-clear pair, then clear ``SCAN`` to ``0x22``, then post.
 _CANCEL_LAMP_PRE: tuple[int, ...] = (0x30, 0x20)
@@ -528,7 +533,7 @@ class Gl128:
         self._write(0xAB, int(clk_b))
         # SF AFE strips: 0xA3=0, 0xA6:0xA7 = 0xA8:0xA9 = 1 (PartB B4.2).
         self._write(0xA3, 0x00)
-        self._write_many({0xA6: 0x00, 0xA7: 0x01, 0xA8: 0x00, 0xA9: 0x01})
+        self._write_many(_CALIB_STRIP_A6_A9)
         end = AFE_WIDE_ENDPIXEL if wide else AFE_ENDPIXEL
         self.protocol.write_u24(r.REG_LINCNT, 1)
         self.protocol.write_u16(r.REG_DPISET, dpi_calib)
@@ -757,6 +762,9 @@ class Gl128:
         # SilverFast raises LINESEL on both strips at high PPI (model table).
         reg1d = self._reg_cache.get(0x1D, 0x80) & ~0x1F
         self._write(0x1D, reg1d | self.model.shading_linesel_for(int(resolution)))
+        # Write these here rather than relying on a preceding AFE strip: when the
+        # AFE is reused, the last image pass has reset them to 0.
+        self._write_many(_CALIB_STRIP_A6_A9)
         self.protocol.write_u24(r.REG_LINCNT, int(lines))
         self.protocol.write_u16(r.REG_DPISET, dpi_calib)
         self.protocol.write_u24(r.REG_STRPIXEL, start)
