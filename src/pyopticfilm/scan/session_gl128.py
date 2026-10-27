@@ -296,6 +296,12 @@ class Gl128ScanSession(ScanSession):
         # cache would clear IR LED or re-enable the white lamp.
         cache.pop(r.REG_0x03, None)
         cache.pop(r.REG_IR, None)
+        # Leave the AFE ports alone too: a ``0x5E`` write commits a value to the
+        # FE index in ``0x51``, so the boot map's ``0x5E=0x1F`` blasted after
+        # :meth:`apply_frontend` overwrote the blue offset (FE index 7).
+        cache.pop(r.REG_FE_INDEX, None)
+        cache.pop(r.REG_FE_HIGH, None)
+        cache.pop(r.REG_FE_LOW, None)
 
         if not shading:
             low = _IMAGE_REG_1D_LOW_BY_DPI.get(model.asic_dpi_for(dpi), 0)
@@ -379,9 +385,10 @@ class Gl128ScanSession(ScanSession):
                 geometry,
                 long_exposure=bool(self._pass_long_exposure),
             )
-            # The scan must stop at the window end: feed2 + travel <= 27636
-            # steps. Overrunning it is what ground the motor in the Lab.
-            max_fn = getattr(model, "max_lincnt_for", None)
+            # The scan must stop where SilverFast's own full frames stop:
+            # feed2 + travel <= 27648 steps. Overrunning the window end is what
+            # ground the motor in the Lab.
+            max_fn = getattr(model, "max_safe_lincnt_for", None)
             max_lc = max_fn(scan_steps, dpi) if callable(max_fn) else None
             if max_lc is not None and geometry.lincnt_register > int(max_lc):
                 start_mm = scan_steps * 25.4 / model.feed_steps_per_inch
@@ -389,8 +396,8 @@ class Gl128ScanSession(ScanSession):
                     f"Image LINCNT {geometry.lincnt_register} at {dpi} dpi is "
                     f"{geometry.travel_mm:.1f} mm of travel from feed2="
                     f"{scan_steps} ({start_mm:.1f} mm), past the "
-                    f"{model.scan_window_end_steps * 25.4 / model.feed_steps_per_inch:.1f} mm "
-                    f"scan-window end. Max LINCNT here is {max_lc} "
+                    f"{model.max_travel_end_steps * 25.4 / model.feed_steps_per_inch:.1f} mm "
+                    f"travel limit. Max LINCNT here is {max_lc} "
                     "(see captures/8200i-se/MOTOR.md)."
                 )
             self.asic.position_for_full_frame_scan(scan_steps=scan_steps)
