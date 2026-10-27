@@ -316,6 +316,11 @@ def _geometry_from_mm(
     extra_lines = num_staggered
     if bool(getattr(model, "lincnt_includes_line_shift", True)):
         extra_lines += max_shift
+    # GL128 full frame: SilverFast's own line count (one frame plus the line
+    # shift and a tail); the TA height in mm is up to one line off it.
+    full_frame_fn = getattr(model, "full_frame_image_lines", None)
+    if frame_lines and callable(full_frame_fn):
+        lines = int(full_frame_fn(resolution)) - extra_lines
     register_lincnt = (lines + extra_lines) * lincnt_per_line
 
     channels = 3

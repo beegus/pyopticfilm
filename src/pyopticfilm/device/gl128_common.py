@@ -509,6 +509,19 @@ class Gl128Common:
         """Native lines the ASIC returns per *ASIC* output line."""
         return max(1, self.optical_resolution // self.asic_dpi_for(resolution))
 
+    def full_frame_image_lines(self, resolution: int) -> int:
+        """Image lines SilverFast programs for a full frame (``LINCNT`` per line).
+
+        ``frame + round(ld_shift_b × dpi / 7200) + (5 at 7200 dpi, else 1)``:
+        605 at 600 dpi, 1813 at 1800, 3625 at 3600, 7253 at 7200. Every
+        SilverFast full frame on the three models matches. The extra lines
+        are cut again after line-shift alignment, so output stays one frame.
+        """
+        dpi = self.asic_dpi_for(resolution)
+        frame = round(float(self.full_frame_output_inches) * dpi)
+        shift = round(int(self.ld_shift_b) * dpi / int(self.motor_base_ydpi))
+        return frame + shift + (5 if self.oversample_for(resolution) == 1 else 1)
+
     def multi_pass_allowed_at(self, resolution: int) -> bool:
         """Whether multi-exposure and Multi-Pass may run at ``resolution``.
 

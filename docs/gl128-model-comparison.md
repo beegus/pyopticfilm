@@ -581,7 +581,11 @@ chunky RGB). That SF value is **exactly** the 8100 V2 pyopticfilm
 | 7200 | 7253 | **29012** | 27476 |
 
 Physical height at 7200: `7253 / 7200 × 25.4 ≈ 25.59 mm` (= shared
-`y_size_ta_mm`). The SE ladder is shorter by `128 × asic_dpi / 600` at every
+`y_size_ta_mm`). The SF line count follows one rule on all three models:
+`frame + round(48 × dpi / 7200) + (5 at 7200, else 1)`, where `frame` is one
+inch at the ASIC dpi. Full-frame image passes program it through
+`Gl128Common.full_frame_image_lines`; `int(y_size_ta_mm × dpi / 25.4)` was up to
+one line off it. The SE ladder is shorter by `128 × asic_dpi / 600` at every
 rung — the same gap that forced the V2 leaf’s own ladder table.
 
 **Leaf implication (since 1.3.7):** the 8300i SE programs the SF `LINCNT`
