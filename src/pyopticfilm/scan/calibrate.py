@@ -31,7 +31,9 @@ CACHE_IDENT = "pyopticfilm"
 #: v12: GL128 colour calibration runs with ``0x37=0xC0`` (was the ``0xB0`` readback).
 #: v13: GL128 boot sets the ASIC clock (``0x8C``); older tables ran on the power-on clock.
 #: v14: GL128 calibrates on the per-model scan clock (8300i SE ``0x0D``, V2 ``0x0C``).
-CACHE_VERSION = 14
+#: v15: GL128 AFE follows SilverFast (optical-black offsets, AD9826 gains); older
+#: entries hold offsets pinned at ``0x10``.
+CACHE_VERSION = 15
 DARK_SETTLE_S = 0.2
 WHITE_SETTLE_S = 0.5
 
@@ -411,7 +413,7 @@ class Calibrator:
                 )
                 if callable(search) and not reuse_afe:
                     logger.info("GL128 running stationary AFE search (attempt %d)", attempt + 1)
-                    search(method="transparency")
+                    search(method="transparency", resolution=geometry.resolution)
                 elif reuse_afe:
                     logger.info(
                         "GL128 reusing colour AFE codes for dpi=%d shading remesure (attempt %d)",
@@ -596,7 +598,7 @@ class Calibrator:
             with self._stationary_motor():
                 self._ensure_at_home()
                 logger.info("GL128 running stationary IR AFE search dpi=%d", geometry.resolution)
-                search(method="infrared")
+                search(method="infrared", resolution=geometry.resolution)
                 shade(
                     resolution=geometry.resolution,
                     method="infrared",

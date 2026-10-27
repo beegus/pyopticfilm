@@ -39,7 +39,8 @@ def _asic() -> MagicMock:
 
 def _wire(asic: MagicMock, *, flatten_ok: bool, order: list[str] | None = None) -> None:
     def search_afe(**kw):
-        assert kw == {"method": "infrared"}
+        assert kw["method"] == "infrared"
+        assert kw["resolution"] > 0
         assert asic._motor_moves_enabled is False
         if order is not None:
             order.append("ir_afe")
