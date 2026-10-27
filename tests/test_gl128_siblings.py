@@ -75,7 +75,7 @@ def test_divergent_fields_match_capture_catalog():
     assert MODEL_8200I_SE.ladder_feed2_steps == 13560
     assert MODEL_8100_V2.ladder_feed2_steps == 13128
     assert MODEL_8300I_SE.ladder_feed2_steps == 13128
-    assert MODEL_8200I_SE.lperiod_by_dpi[7200] == 15963
+    assert MODEL_8200I_SE.lperiod_by_dpi[7200] == 16035
     assert MODEL_8100_V2.lperiod_by_dpi[7200] == 16035
     assert MODEL_8300I_SE.lperiod_by_dpi[7200] == 16035
     assert MODEL_8300I_SE.lperiod_by_dpi[1200] == 11283

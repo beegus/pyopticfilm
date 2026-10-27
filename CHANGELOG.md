@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **Checked against SilverFast.** Replaying 21 captured SilverFast searches (all three models, colour and IR, 600–7200 ppi) through the new code gives SilverFast's gain codes within 1 and its offset codes within 3.
   - **Fallback.** If a channel's black does not respond to the offset probe, that channel uses SilverFast's typical codes and a warning is logged.
   - **Recalibration.** Calibration cache v15 discards older entries, so the first scan after upgrading recalibrates.
+- **GL128 `LPERIOD` (`0x28`) on the 8200i SE and 8100 V2 came from a crop, not a full frame**. pyopticfilm's per-PPI table was taken from 8200i SE session 13, a 24.2 mm crop (window span 10224), so full frames ran 3–72 counts below SilverFast's value (1800 ppi: 11490 against 11499; 7200 ppi on the SE: 15963 against 16035). The 8100 V2's and 8300i SE's own LPERIOD values were the same thing measured on full frames, not model differences.
+  - **The rule.** SilverFast's value depends on the window, not the model: `10851 + pixels / 4` (`/ 2` from 3600 ppi), with `pixels = (END − STR) × ppi / 7200`. It reproduces exactly every SilverFast LPERIOD checked in the captures: image passes, shading strips and AFE strips, full frames and crops (spans 9912–10370), on all three models.
+  - **What changes.** pyopticfilm now programs the rule for each pass's own window, so full frames match SilverFast and crops get SilverFast's lower values too. The AFE strip line periods from the SilverFast AFE fix come from the same rule.
+  - **Recalibration.** Calibration cache v16 discards older entries, because the shading strips on the 8200i SE and 8100 V2 now run at the new value.
 
 ### Notes for integrators
 
@@ -32,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - from `pyopticfilm.scan.calib_gl128`: `adaptive_afe_white_target`, `AFE_WHITE_TARGET_SF` / `_MIN` / `_MAX`, `AFE_OFFSET_MIN`, `AFE_GAIN_COARSE_DIVISOR` and `COLOR_AFE_SESSION04_OFFSETS`;
   - from `pyopticfilm.asic.gl128`: `IR_AFE_FALLBACK_GAINS`, `IR_AFE_FALLBACK_OFFSETS` and `IR_AFE_HEALTHY_MEAN`.
 - `search_afe_codes` and `AfeSearchConfig` remain for GL845.
+- `Gl128Common.line_period_for(resolution, *, span=None)` takes the window span (`END − STR`, native pixels) and defaults to SilverFast's full frame. New in `pyopticfilm.device.gl128_common`: `lperiod_for_window`, `lperiod_for_line`, `LPERIOD_BASE` and `FULL_FRAME_SPAN_NATIVE`. `lperiod_by_dpi` is now one shared full-frame table on `Gl128Common`, no longer declared per model.
 
 ## [1.3.8] - 2026-10-26
 

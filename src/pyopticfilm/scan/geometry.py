@@ -348,7 +348,7 @@ def _geometry_from_mm(
     # Prefer SE helper when present; else SANE dpi/method lookup.
     lperiod_fn = getattr(model, "line_period_for", None)
     if callable(lperiod_fn):
-        exposure_lperiod = int(lperiod_fn(resolution))
+        exposure_lperiod = int(lperiod_fn(resolution, span=pixel_endx - pixel_startx))
     else:
         exposure_lperiod = exposure_lperiod_for(model, resolution)
 
