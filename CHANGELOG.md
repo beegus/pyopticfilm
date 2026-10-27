@@ -61,6 +61,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **Before.** pyopticfilm used a fixed recipe: DPISET 200, clocks `02`, exposure 14000 even on the 8300i SE, and `0x33=0x04` against `0xAF=0xFF`. #102 showed `0xAF` changes the actual feed distance, and `0x33` is its partner.
   - **Checked against SilverFast.** The feeds now match its captures register for register on the 8300i SE (900–7200 ppi, colour and IR) and the 8100 V2 at 7200 ppi; the remaining differences belong to other registers.
   - **On the 8200i SE.** Three scans each before and after landed the frame within the scanner's normal jitter (about 0.5 rows at 1800 ppi), and feed times were unchanged.
+- **GL128 dark and white shading strips write `0xA6`–`0xA9` themselves** (8200i SE, 8100 V2, 8300i SE). SilverFast writes `00 01 00 01` there on every calibration strip (AFE, dark and white) and `00 00 00 00` on feeds and the image pass. pyopticfilm wrote it only on the AFE strips, and the shading strips inherited it. When a shading run reuses the previous AFE result, the last image pass has already reset these registers to `00`, so the strips would have run with different values from SilverFast. The wire values of a normal scan are unchanged (checked on the 8200i SE: 1800 ppi colour + IR and multi-exposure).
 
 ### Notes for integrators
 
