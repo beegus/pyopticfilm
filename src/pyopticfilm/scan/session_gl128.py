@@ -185,6 +185,10 @@ class Gl128ScanSession(ScanSession):
         self.last_multi_pass_debug = None
         #: IR→short alignment shift from the last multi-pass scan (ME or IR-only).
         self.last_align_shift_ir: tuple[float, float] | None = None
+        #: True when this scan runs colour calibration, which loads the ASIC
+        #: shading table for its window. Without it the table in RAM is from an
+        #: earlier scan (any resolution / width), so DVDSET must stay off.
+        self._use_asic_shading: bool = False
 
     def run(
         self,
@@ -206,6 +210,7 @@ class Gl128ScanSession(ScanSession):
         validate_manual_exposure(me_short_exposure, label="me_short_exposure")
         validate_manual_exposure(me_long_exposure, label="me_long_exposure")
         validate_n_passes(n_passes)
+        self._use_asic_shading = bool(kwargs.get("apply_calib", True)) and self.calibrator is not None
         geometry = kwargs.get("geometry")
         resolution = getattr(geometry, "resolution", None) or kwargs.get("resolution", 1800)
         check_gl128_multi_pass(
@@ -285,9 +290,12 @@ class Gl128ScanSession(ScanSession):
         # Infrared must never keep DVDSET: a colour table after a colour+IR pair
         # makes the IR frame magenta, uneven, and low-contrast for dust, and an
         # IR table streaks it (Gl128.run_asic_shading); the host flattens IR.
+        # An uncalibrated scan (apply_calib=False) must not reuse the table an
+        # earlier scan left in RAM: it fits that scan's window, not this one.
         reg01 = (cache.get(r.REG_0x01, 0x22) | r.SHDAREA) & ~r.SCAN & ~r.STAGGER
         infrared = getattr(self.asic, "_scan_method", None) == "infrared"
-        if shading or infrared or not getattr(self.asic, "asic_shading_ready", False):
+        ready = self._use_asic_shading and getattr(self.asic, "asic_shading_ready", False)
+        if shading or infrared or not ready:
             reg01 &= ~r.DVDSET
         cache[r.REG_0x01] = reg01
 
