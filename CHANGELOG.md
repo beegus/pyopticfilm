@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **GL128 image passes overwrote the calibrated blue AFE offset** (8200i SE, 8100 V2, 8300i SE). The frontend is written through ports: `0x51` selects the AFE index and a write to `0x5E` commits the value. Before every image pass, pyopticfilm programmed the calibrated AFE codes and then rewrote its whole register cache, which includes the boot value `0x5E=0x1F`. With `0x51` still pointing at index 7, that set the blue offset to `0x1F` regardless of calibration. A pyopticfilm USB capture on the 8200i SE shows it on the wire (blue offset `0x10` → `0x1F`). The blue black level in the image no longer matched the level the shading dark terms were measured at. SilverFast never writes `0x5E` after its final AFE programming. The image-pass register write now skips `0x51`/`0x5D`/`0x5E`, so the calibrated codes stay as programmed.
+
 ## [1.3.8] - 2026-10-26
 
 ### Added

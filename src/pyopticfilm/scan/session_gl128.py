@@ -296,6 +296,12 @@ class Gl128ScanSession(ScanSession):
         # cache would clear IR LED or re-enable the white lamp.
         cache.pop(r.REG_0x03, None)
         cache.pop(r.REG_IR, None)
+        # Leave the AFE ports alone too: a ``0x5E`` write commits a value to the
+        # FE index in ``0x51``, so the boot map's ``0x5E=0x1F`` blasted after
+        # :meth:`apply_frontend` overwrote the blue offset (FE index 7).
+        cache.pop(r.REG_FE_INDEX, None)
+        cache.pop(r.REG_FE_HIGH, None)
+        cache.pop(r.REG_FE_LOW, None)
 
         if not shading:
             low = _IMAGE_REG_1D_LOW_BY_DPI.get(model.asic_dpi_for(dpi), 0)
