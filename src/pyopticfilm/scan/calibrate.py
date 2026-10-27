@@ -33,8 +33,9 @@ CACHE_IDENT = "pyopticfilm"
 #: v14: GL128 calibrates on the per-model scan clock (8300i SE ``0x0D``, V2 ``0x0C``).
 #: v15: GL128 AFE follows SilverFast (optical-black offsets, AD9826 gains); older
 #: entries hold offsets pinned at ``0x10``.
-#: v16: GL128 shading-strip clocks follow the strip width (SE / V2 dark and white strips).
-CACHE_VERSION = 16
+#: v16: GL128 LPERIOD follows the window (8200i SE / 8100 V2 shading strips changed).
+#: v17: GL128 shading-strip clocks follow the strip width (SE / V2 dark and white strips).
+CACHE_VERSION = 17
 DARK_SETTLE_S = 0.2
 WHITE_SETTLE_S = 0.5
 

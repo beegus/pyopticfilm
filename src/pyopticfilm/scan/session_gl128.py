@@ -314,7 +314,8 @@ class Gl128ScanSession(ScanSession):
         cache[r.REG_0x02] = motor
 
         self._set24(cache, r.REG_LINCNT, geometry.lincnt_register)
-        self._set24(cache, r.REG_LPERIOD, model.line_period_for(dpi))
+        span = geometry.pixel_endx - geometry.pixel_startx
+        self._set24(cache, r.REG_LPERIOD, model.line_period_for(dpi, span=span))
         # Captures: AFE/shading always use DPISET = optical_resolution/6 (1200).
         dpiset = (
             model.optical_resolution // 6 if shading else geometry.register_dpiset
@@ -400,7 +401,13 @@ class Gl128ScanSession(ScanSession):
                     f"travel limit. Max LINCNT here is {max_lc} "
                     "(see captures/8200i-se/MOTOR.md)."
                 )
-            self.asic.position_for_full_frame_scan(scan_steps=scan_steps)
+            # Feeds run under the image registers, like SilverFast's. SF does
+            # not rewrite 0x2B before them, so they keep its white shading
+            # strip's dummy (differs from the image's on the 8300i SE <= 600
+            # and the 8100 V2 at 3600).
+            feed_regs = dict(cache)
+            feed_regs[0x2B] = model.shading_strip_clocks(dpi, dvdset=True)[0]
+            self.asic.position_for_full_frame_scan(scan_steps=scan_steps, scan_regs=feed_regs)
 
         self.asic.upload_tables(
             resolution=dpi, shading=shading, channel_exposure=channel_exp
@@ -432,7 +439,7 @@ class Gl128ScanSession(ScanSession):
             geometry.lincnt_register,
             geometry.pixel_startx,
             geometry.pixel_endx,
-            model.line_period_for(dpi),
+            model.line_period_for(dpi, span=span),
             shading,
             exposure_reg,
         )

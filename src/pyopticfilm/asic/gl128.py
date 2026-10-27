@@ -23,6 +23,7 @@ Differences from :class:`~pyopticfilm.asic.gl845.Gl845` that matter here:
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import Literal
 
 from pyopticfilm.asic.buttons import BUTTON_IDS, Button
@@ -174,6 +175,30 @@ _FEED_SETUP_REGS: dict[int, int] = {
 #: reference feed and ``0xFF`` before this one. With ``0x7F`` the feed runs slower
 #: and lands about 270 steps short, so every frame started 0.5 mm high (#102).
 _FINAL_FEED_REG_AF = 0xFF
+#: ``0xAF`` on the reference feed (also what :data:`_FEED_SETUP_REGS` carries).
+_REFERENCE_FEED_REG_AF = 0x7F
+#: SilverFast runs both positioning feeds with the image pass's registers already
+#: programmed (DPISET, pixel clocks, LPERIOD, window, exposure, ``0x1D``, depth
+#: ``0x33``), on every model and PPI. A feed changes only these itself: motor /
+#: START / counters / FEEDL, and LINCNT stays at the previous strip's value.
+_FEED_OWN_REGS: frozenset[int] = frozenset({0x02, 0x0D, 0x0F, 0x25, 0x26, 0x27, 0x3D, 0x3E, 0x3F})
+#: Feed-time values SilverFast writes that differ from the image pass's.
+_FEED_FIXED_REGS: tuple[int, ...] = (0x01, 0x05)
+
+
+def _feed_setup_regs(scan_regs: Mapping[int, int] | None, *, final_positioning: bool) -> dict[int, int]:
+    """Registers written before a positioning feed.
+
+    With the image pass's ``scan_regs`` the feed runs under them like SilverFast's;
+    without, the fixed capture recipe :data:`_FEED_SETUP_REGS` is used.
+    """
+    if scan_regs is None:
+        setup = dict(_FEED_SETUP_REGS)
+    else:
+        setup = {a: v for a, v in scan_regs.items() if a not in _FEED_OWN_REGS}
+        setup.update({a: _FEED_SETUP_REGS[a] for a in _FEED_FIXED_REGS})
+    setup[0xAF] = _FINAL_FEED_REG_AF if final_positioning else _REFERENCE_FEED_REG_AF
+    return setup
 
 #: Two 34-byte blobs the Windows driver writes to ``0x000FFF00`` and
 #: ``0x000FFF01`` before the register blast. Their meaning is unknown; they are
@@ -245,6 +270,8 @@ class Gl128:
         #: Last successful :meth:`search_afe` result; image configure re-applies
         #: it so scan setup does not wipe calibrated FE gains back to boot zero.
         self.last_afe: AfeFrontend | None = None
+        #: ``LPERIOD`` written by the last shading strip setup (for its log line).
+        self._strip_lperiod = 0
         #: USB line layout learned from AFE strip means (True=planar RRR…GGG…BBB…).
         self.usb_planar_rgb: bool = False
         #: Last colour shading validation failure (for CalibrationError text).
@@ -732,7 +759,8 @@ class Gl128:
         self.protocol.write_u24(r.REG_STRPIXEL, start)
         self.protocol.write_u24(r.REG_ENDPIXEL, end)
         self.protocol.write_u24(r.REG_FEEDL, 1)
-        self.protocol.write_u24(r.REG_LPERIOD, int(self.model.line_period_for(int(resolution))))
+        self._strip_lperiod = int(self.model.line_period_for(int(resolution), span=end - start))
+        self.protocol.write_u24(r.REG_LPERIOD, self._strip_lperiod)
         self.protocol.write_u24(r.REG_EXPOSURE, int(self.model.exposure_lperiod))
         self._write(r.REG_DEPTH_A, r.DEPTH16_A)
         self._write(r.REG_DEPTH_B, r.DEPTH16_B)
@@ -833,7 +861,7 @@ class Gl128:
                 "GL128 shading strip START 0x01=%#04x 0x02=%#04x LPERIOD=%d DEPTH=%#04x/%#04x (want 0x01=%#04x 0x02=%#04x)",
                 int(self.protocol.read_register(r.REG_0x01)) & 0xFF,
                 int(self.protocol.read_register(r.REG_0x02)) & 0xFF,
-                int(self.model.line_period_for(int(resolution))),
+                self._strip_lperiod,
                 int(self._reg_cache.get(r.REG_DEPTH_A, 0)) & 0xFF,
                 int(self._reg_cache.get(r.REG_DEPTH_B, 0)) & 0xFF,
                 reg01 & 0xFF,
@@ -1437,6 +1465,7 @@ class Gl128:
         use_slow_slope: bool = False,
         final_positioning: bool = False,
         ignore_probe: bool = False,
+        scan_regs: Mapping[int, int] | None = None,
     ) -> None:
         """Replay the captured fast-feed recipe (see MOTOR.md).
 
@@ -1454,6 +1483,9 @@ class Gl128:
         ``ignore_probe``: end the feed on ``FEEDFSH`` and motor stop only. SilverFast
         never reads the probe on the scan-start feed (#111); the reference feed
         still needs it.
+
+        ``scan_regs``: the image pass's register set; the feed then runs under
+        it, as SilverFast's do (see :func:`_feed_setup_regs`).
         """
         steps = max(0, int(steps))
         if steps == 0:
@@ -1464,10 +1496,7 @@ class Gl128:
 
         r = self.registers
         self.wait_motor_idle(f"before arming a {steps}-step feed")
-        setup = dict(_FEED_SETUP_REGS)
-        if final_positioning:
-            setup[0xAF] = _FINAL_FEED_REG_AF
-        self._write_many(setup)
+        self._write_many(_feed_setup_regs(scan_regs, final_positioning=final_positioning))
         self.protocol.write_u24(r.REG_FEEDL, steps)
         self._write(r.REG_0x02, r.MTRPWR | r.FASTFED)  # 0x18
         self._upload_fast_slopes(use_slow=use_slow_slope)
@@ -1610,12 +1639,14 @@ class Gl128:
         *,
         scan_steps: int | None = None,
         timeout_s: float = 60.0,
+        scan_regs: Mapping[int, int] | None = None,
     ) -> None:
         """From home: feed to reference, then to the scan-start line.
 
         Replays ``28292`` then ``scan_steps`` (default the model's full-frame
         feed2, ``13128`` on the SE/V2; crops map ``y1`` into the scan window).
-        Requires home.
+        Pass the image pass's ``scan_regs`` so both feeds run under them, as
+        SilverFast's do. Requires home.
         """
         self._require_motor_enabled()
         if not getattr(self, "_park_ok", True):
@@ -1648,6 +1679,7 @@ class Gl128:
             timeout_s=min(timeout_s / 2, _REFERENCE_FEED_TIMEOUT_S),
             require_motion=True,
             use_slow_slope=True,
+            scan_regs=scan_regs,
         )
         self._feed_capture(
             second,
@@ -1656,6 +1688,7 @@ class Gl128:
             use_slow_slope=False,
             final_positioning=True,
             ignore_probe=True,
+            scan_regs=scan_regs,
         )
         end = self.read_status_reliable()
         logger.info("GL128 positioned for scan (status 0x%02x)", end.raw)

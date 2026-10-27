@@ -16,6 +16,8 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from pyopticfilm.device.gl128_common import lperiod_for_line
+
 #: Analog frontend register indices (GL124 ``0x51`` / ``0x5d`` / ``0x5e`` path).
 #: AD9826 layout, hardware-probed on the 8200i SE: ``0x02``-``0x04`` are 6-bit
 #: PGA gains, ``0x05``-``0x07`` are 9-bit sign-magnitude offsets (bit 8 = minus).
@@ -141,11 +143,6 @@ AFE_FALLBACK_PRE_OFFSETS: tuple[int, int, int] = (-95, -82, -81)
 AFE_FALLBACK_OFFSETS_COLOR: tuple[int, int, int] = (15, 23, 19)
 AFE_FALLBACK_OFFSETS_IR: tuple[int, int, int] = (-31, -20, -28)
 
-#: SF AFE strip line periods ``(narrow, wide)``: one pair up to 2400 ppi, a
-#: longer one from 3600 ppi (identical on all three models).
-AFE_STRIP_LPERIOD_LOW: tuple[int, int] = (10979, 13445)
-AFE_STRIP_LPERIOD_HIGH: tuple[int, int] = (11107, 16040)
-AFE_STRIP_LPERIOD_HIGH_FROM_DPI = 3600
 #: ``0x2B`` for the pre-offset probes, and for the wide strip and later probes.
 AFE_STRIP_DUMMY_PRE = 0x02
 AFE_STRIP_DUMMY_WIDE = 0x17
@@ -160,15 +157,16 @@ class AfeStripTiming:
 
 
 def afe_strip_timing(scan_dpi: int, *, wide: bool, pre_offset: bool = False) -> AfeStripTiming:
-    """SF's AFE strip timing for a scan at ``scan_dpi`` (ASIC dpi)."""
-    narrow_lp, wide_lp = (
-        AFE_STRIP_LPERIOD_HIGH
-        if int(scan_dpi) >= AFE_STRIP_LPERIOD_HIGH_FROM_DPI
-        else AFE_STRIP_LPERIOD_LOW
-    )
+    """SF's AFE strip timing for a scan at ``scan_dpi`` (ASIC dpi).
+
+    ``LPERIOD`` follows the GL128 line rule (:func:`lperiod_for_line`): the
+    pre-offset probes for their 512 px, everything from the wide strip on for
+    the wide strip's 10378 px (SF keeps that value for the later narrow probes).
+    That gives 10979 / 13445, or 11107 / 16040 from 3600 ppi.
+    """
     if pre_offset:
-        return AfeStripTiming(lperiod=narrow_lp, dummy=AFE_STRIP_DUMMY_PRE)
-    return AfeStripTiming(lperiod=wide_lp, dummy=AFE_STRIP_DUMMY_WIDE)
+        return AfeStripTiming(lperiod=lperiod_for_line(AFE_STRIP_PIXELS, scan_dpi), dummy=AFE_STRIP_DUMMY_PRE)
+    return AfeStripTiming(lperiod=lperiod_for_line(AFE_WIDE_PIXELS, scan_dpi), dummy=AFE_STRIP_DUMMY_WIDE)
 
 
 def _u16_plane(strip: bytes, *, pixels: int) -> list[int]:

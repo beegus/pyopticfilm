@@ -58,14 +58,13 @@ independently proven on V2.
 | 2 | Infrared / iSRD | no | yes |
 | 3 | Full-frame feed 2 | 13128 | 13128 (TA top; session 03 / #67) |
 | 4 | PPI-ladder feed 2 | 13128 | 13560 |
-| 5 | `LPERIOD` at every captured PPI | V2 higher (see timing table) | SE session 13 table |
+| 5 | `LPERIOD` at every captured PPI | same window rule (§5); full frame | same rule; session 13 values are its crop |
 | 6 | White shading dummy `0x2B` @ 7200 | `0x10` | `0x10` (same strip-width rule; was `0x17`) |
 | 7 | Ladder image `LINCNT` | taller crop (see geometry) | session 13 table |
 
-pyopticfilm currently ships only the 7200 `LPERIOD` override on V2
-(16035 vs 15963). Session `06_ppi_ladder` shows the same “V2 slightly
-higher” pattern at 150–3600 dpi as well; those rungs are **not** yet
-model-table overrides.
+`LPERIOD` was once listed as a V2 difference (16035 vs 15963 at 7200). It is
+not: every GL128 model follows one window rule (§5), and the SE numbers were
+its session-13 crop.
 
 Positioning slope **order** is not a divergence: both models upload
 `SLOPE_TABLE_SLOW` then `SLOPE_TABLE_FAST` (PR #56). The old
@@ -301,27 +300,35 @@ in pyopticfilm; 135i usbmon payloads were not decoded here).
 
 ### `LPERIOD` (`0x28`, 24-bit BE) at image pass
 
-| Output PPI | 8100 V2 (capture) | 8200i SE (session 13) | 135i | Verdict |
+SilverFast's value depends on the window, not the model:
+`10851 + pixels / 4` (`/ 2` from 3600 ppi), `pixels = (END − STR) × ppi / 7200`
+(`lperiod_for_window` in `device/gl128_common.py`). It reproduces every
+SilverFast write in the captures: image passes and shading strips, full frames
+(span 10368) and crops (session 13: 10224, session 04: 9912, session 14: 9960)
+on all three models, and the AFE strips (512 / 10378 px). The two columns below
+are the same rule at two widths.
+
+| Output PPI | 8100 V2 (full frame, span 10368) | 8200i SE (session 13 crop, span 10224) | 135i | Verdict |
 |------------|-------------------|----------------------|------|---------|
-| 150 | 11067 (shared ASIC 600 programming) | 11064 | unknown | different |
-| 300 | 11067 | 11064 | unknown | different |
-| 600 | 11067 | 11064 | unknown | different |
-| 720 | 11110 | 11106 | unknown | different |
-| 900 | 11175 | 11170 | unknown | different |
-| 1200 | 11283 | 11277 | unknown | different |
-| 1440 | 11369 | 11362 | unknown | different |
-| 1800 | 11499 | 11490 | unknown | different |
-| 2400 | 11715 | 11703 | unknown | different |
-| 3600 | 13443 | 13407 | unknown | different |
-| 7200 | 16035 | 15963 | 15991 | different |
+| 150 | 11067 (shared ASIC 600 programming) | 11064 | unknown | same rule |
+| 300 | 11067 | 11064 | unknown | same rule |
+| 600 | 11067 | 11064 | unknown | same rule |
+| 720 | 11110 | 11106 | unknown | same rule |
+| 900 | 11175 | 11170 | unknown | same rule |
+| 1200 | 11283 | 11277 | unknown | same rule |
+| 1440 | 11369 | 11362 | unknown | same rule |
+| 1800 | 11499 | 11490 | unknown | same rule |
+| 2400 | 11715 | 11703 | unknown | same rule |
+| 3600 | 13443 | 13407 | unknown | same rule |
+| 7200 | 16035 | 15963 | 15991 | same rule (135i different) |
 | ~2400 preview (DPISET 400) | — | — | 11239 | different |
 | ~1200 panorama (DPISET 200) | — | — | 11023 | different |
 
 V2 values at 150–3600 are unique image-pass snapshots from
 `06_ppi_ladder.pcapng` (150/300/600 collapse to one ASIC program). 7200
 is session `04_color_7200` (also 16035 on dark and white shading). SE
-values are session 13. 135i 7200 sits **between** SE and V2. pyopticfilm’s
-V2 model table still inherits the SE numbers except at 7200.
+values are session 13. 135i 7200 sits **between** them. pyopticfilm programs
+the rule for each pass's own window on all three models.
 
 ### `DPISET` (`0x2C`, 16-bit BE)
 
@@ -393,8 +400,8 @@ white `0x17` was the image dummy, not a model difference. The image pass stays
 | ME long clamp (not 7200 dpi) | 14000–85000 | 14000–85000 | unknown | inconclusive |
 | ME long clamp (7200 dpi, oversample 1) | 14000–64000 | 14000–64000 | unknown | inconclusive |
 
-LPERIOD is the clear timing split: V2 is a few counts above SE at every
-measured PPI, and 135i 7200 is a third constant. DPISET at 7200 and image
+LPERIOD is not a model split: it follows the window width (§5); 135i 7200 is
+a third constant. DPISET at 7200 and image
 dummy at 7200 are shared. The shading-strip clocks are shared too (one
 strip-width rule). 135i image-pass exposure is not in the decoded
 notes used here.
@@ -847,8 +854,6 @@ See [§10.9](#109-open-gaps-8300i-se).
 - Product string / configuration descriptor (session 01 did not fetch strings)
 - Slope ROM payload byte-equality vs SE (driver assumes identical)
 - Vendor `wIndex=0x20` / `0x18` meaning
-- Whether non-7200 `LPERIOD` deltas should become model-table overrides
-  (captures say they differ; pyopticfilm currently inherits SE except 7200)
 
 Closed by hardware measurement (Scan Lab TIFFs, 2026-10-16): the 7200 dpi
 "jaggies" are a period-2 column stagger of 4 rows (same CCD stagger the GL845
