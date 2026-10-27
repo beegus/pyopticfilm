@@ -36,7 +36,8 @@ CACHE_IDENT = "pyopticfilm"
 #: v16: GL128 LPERIOD follows the window (8200i SE / 8100 V2 shading strips changed).
 #: v17: GL128 shading-strip clocks follow the strip width (SE / V2 dark and white strips).
 #: v18: GL128 shading strips use SilverFast's ``0x1D`` and white-strip motor table.
-CACHE_VERSION = 18
+#: v19: GL128 AFE probes after a throwaway strip (#124); older gains depended on idle time.
+CACHE_VERSION = 19
 DARK_SETTLE_S = 0.2
 WHITE_SETTLE_S = 0.5
 
