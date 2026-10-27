@@ -356,6 +356,11 @@ class Calibrator:
         finally:
             asic._motor_moves_enabled = prev
 
+    def _asic_dpi(self, resolution: int) -> int:
+        """ASIC dpi for ``resolution`` (GL128 floors at 600)."""
+        asic_dpi_for = getattr(self.model, "asic_dpi_for", None)
+        return int(asic_dpi_for(resolution)) if callable(asic_dpi_for) else int(resolution)
+
     def _ensure_at_home(self) -> None:
         assert self.asic is not None
         if getattr(self.asic, "is_at_home", lambda: True)():
@@ -383,6 +388,7 @@ class Calibrator:
             if callable(apply):
                 apply(fe)
             self.asic.last_afe = fe  # type: ignore[attr-defined]
+            self.asic.last_afe_dpi = self._asic_dpi(entry.resolution)  # type: ignore[attr-defined]
             upload = getattr(self.asic, "upload_shading_table", None)
             if not callable(upload):
                 raise CalibrationError("ASIC has no upload_shading_table")
@@ -397,23 +403,33 @@ class Calibrator:
             len(entry.shading_blob),
         )
 
-    def measure_colour_asic_shading(self, geometry: ScanGeometry) -> CalibEntry:
-        """AFE + dark/white at home; save blob. Retries once after re-home on film-like fail."""
+    def measure_colour_asic_shading(self, geometry: ScanGeometry, *, research_afe: bool = False) -> CalibEntry:
+        """AFE + dark/white at home; save blob. Retries once after re-home on film-like fail.
+
+        Colour AFE codes from earlier in the session are reused when they were
+        measured under this resolution's AFE strip timing (ME long-pass
+        remeasure, a dpi change within the same timing regime).
+        ``research_afe`` always runs a new search (``calibrate(force=True)``).
+        """
         if self.asic is None:
             raise CalibrationError("Calibrator has no ASIC handle")
         search = getattr(self.asic, "search_afe", None)
         shade = getattr(self.asic, "run_asic_shading", None)
         if not callable(shade):
             raise CalibrationError("ASIC has no run_asic_shading")
+        from pyopticfilm.scan.calib_gl128 import afe_timing_matches
 
+        scan_dpi = self._asic_dpi(geometry.resolution)
         last_reason = "unknown"
         for attempt in range(2):
             with self._stationary_motor():
                 self._ensure_at_home()
                 last_afe = getattr(self.asic, "last_afe", None)
                 reuse_afe = (
-                    last_afe is not None
+                    not (research_afe and attempt == 0)
+                    and last_afe is not None
                     and getattr(self.asic, "_scan_method", None) == "transparency"
+                    and afe_timing_matches(getattr(self.asic, "last_afe_dpi", None), scan_dpi)
                 )
                 if callable(search) and not reuse_afe:
                     logger.info("GL128 running stationary AFE search (attempt %d)", attempt + 1)
@@ -570,6 +586,7 @@ class Calibrator:
                 if callable(apply):
                     apply(fe)
                 self.asic.last_afe = fe  # type: ignore[attr-defined]
+                self.asic.last_afe_dpi = self._asic_dpi(hit.resolution)  # type: ignore[attr-defined]
                 self.asic.asic_shading_ready = False  # type: ignore[attr-defined]
             self.prefer_asic_shading = False
             self._active = hit
@@ -597,6 +614,7 @@ class Calibrator:
         if not callable(search) or not callable(shade):
             return False
         colour_afe = getattr(asic, "last_afe", None)
+        colour_afe_dpi = getattr(asic, "last_afe_dpi", None)
         reason = None
         try:
             with self._stationary_motor():
@@ -621,6 +639,7 @@ class Calibrator:
                 if callable(apply):
                     apply(colour_afe)
                 asic.last_afe = colour_afe  # type: ignore[attr-defined]
+                asic.last_afe_dpi = colour_afe_dpi  # type: ignore[attr-defined]
             logger.warning(
                 "GL128 IR calibration unavailable (%s); IR pass uses colour AFE codes "
                 "and the per-image flatten",
@@ -813,7 +832,7 @@ class Calibrator:
         # SE colour: measure (or force re-measure) at home; persist blob+AFE.
         if is_gl128 and method == "transparency":
             if force:
-                return self.measure_colour_asic_shading(scan_geo)
+                return self.measure_colour_asic_shading(scan_geo, research_afe=True)
             return self.ensure_colour_asic_shading(scan_geo)
 
         # Genesys / non-GL128: AFE search before dark/white strips.

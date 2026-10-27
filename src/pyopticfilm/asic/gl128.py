@@ -275,6 +275,8 @@ class Gl128:
         #: Last successful :meth:`search_afe` result; image configure re-applies
         #: it so scan setup does not wipe calibrated FE gains back to boot zero.
         self.last_afe: AfeFrontend | None = None
+        #: ASIC dpi whose AFE strip timing :attr:`last_afe` was measured under.
+        self.last_afe_dpi: int | None = None
         #: ``LPERIOD`` written by the last shading strip setup (for its log line).
         self._strip_lperiod = 0
         #: USB line layout learned from AFE strip means (True=planar RRR…GGG…BBB…).
@@ -660,6 +662,7 @@ class Gl128:
         result = AfeFrontend(gains=gains, offsets=_encode_offsets(offsets))
         self.apply_frontend(result)
         self.last_afe = result
+        self.last_afe_dpi = scan_dpi
         logger.info(
             "GL128 AFE %s dpi=%d pre_offsets=%s wide_means=(%.0f,%.0f,%.0f) gains=%s offsets=%s",
             "infrared" if infrared else "colour",
@@ -1280,6 +1283,7 @@ class Gl128:
         self.asic_boot()
         self.upload_tables(resolution=max(self.model.resolutions_dpi))
         self.last_afe = None
+        self.last_afe_dpi = None
         self.asic_shading_ready = False
         self.last_ir_host_white = None
         self.ir_host_flatten_ready = False
