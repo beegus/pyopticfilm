@@ -534,16 +534,29 @@ def test_validate_color_shading_gains_band():
 
 def test_coarse_gains_from_wide_means_match_silverfast():
     from pyopticfilm.scan.calib_gl128 import (
-        AFE_WHITE_TARGETS_IR,
+        AFE_SF_WHITE_TARGETS_COLOR,
+        AFE_SF_WHITE_TARGETS_IR,
         coarse_gains_from_wide_means,
     )
 
     # SF wide-strip means (gain 0, pre-offsets) and the gains SF then wrote:
     # 8200i SE Alignment_test, 8100 V2 06_ppi_ladder, 8300i SE 1800 colour + IR.
-    assert coarse_gains_from_wide_means((24768, 35190, 30620)) == (35, 25, 32)
-    assert coarse_gains_from_wide_means((27316, 39037, 33349)) == (31, 20, 28)
-    assert coarse_gains_from_wide_means((27028, 37931, 31495)) == (32, 22, 31)
-    assert coarse_gains_from_wide_means((32244, 27261, 28848), targets=AFE_WHITE_TARGETS_IR) == (28, 35, 33)
+    sf = AFE_SF_WHITE_TARGETS_COLOR
+    assert coarse_gains_from_wide_means((24768, 35190, 30620), targets=sf) == (35, 25, 32)
+    assert coarse_gains_from_wide_means((27316, 39037, 33349), targets=sf) == (31, 20, 28)
+    assert coarse_gains_from_wide_means((27028, 37931, 31495), targets=sf) == (32, 22, 31)
+    assert coarse_gains_from_wide_means((32244, 27261, 28848), targets=AFE_SF_WHITE_TARGETS_IR) == (28, 35, 33)
+
+
+def test_settled_probe_targets_land_on_silverfast_gains():
+    """#124: with the throwaway strip, the 8200i SE wide means rise by SF's black
+    deficit; the scaled targets still give SF's warm gains (2026-10-27 A/B)."""
+    from pyopticfilm.scan.calib_gl128 import AFE_WHITE_TARGETS_IR, coarse_gains_from_wide_means
+
+    # Same scanner, minutes apart: SF-style probe after 20 s idle gave (35, 25, 32)
+    # colour and (5, 15, 11) IR; these are the wide means with the throwaway strip.
+    assert coarse_gains_from_wide_means((26821, 36750, 32191)) == (35, 25, 32)
+    assert coarse_gains_from_wide_means((48199, 41725, 44274), targets=AFE_WHITE_TARGETS_IR) == (5, 15, 11)
 
 
 def test_search_afe_codes_respects_code_min():

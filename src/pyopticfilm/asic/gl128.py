@@ -628,6 +628,14 @@ class Gl128:
         time.sleep(0.3)
 
         zero = (0, 0, 0)
+        # Throwaway strip (#124): the first line after the CCD sat unclocked
+        # carries the charge it gathered meanwhile, so its optical black reads
+        # high by an amount that grows with idle time (+600 counts after ~10 s
+        # at gains 0) and sensor temperature. That moved the pre-offsets from
+        # about -105 (warm) to -25 (cold) and the gains by 2-3 codes. Clocking
+        # one strip first makes the probe read true black every time.
+        self.apply_frontend(AfeFrontend(gains=zero, offsets=(AFE_OFFSET_PROBE_LOW,) * 3))
+        self.acquire_afe_strip(AFE_STRIP_BYTES, timing=pre_timing)
         pre = self._offsets_for_black(
             zero, AFE_PRE_OFFSET_BLACK, pre_timing, fallback=AFE_FALLBACK_PRE_OFFSETS, stage="pre-offset"
         )

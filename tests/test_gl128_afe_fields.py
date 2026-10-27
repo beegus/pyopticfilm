@@ -268,7 +268,7 @@ def test_afe_strip_timing_matches_silverfast(dpi: int, narrow: int, wide: int) -
 
 
 def test_search_afe_follows_silverfast_strip_sequence(monkeypatch) -> None:
-    """Two gain-0 probes (pre timing), the wide strip, then two probes at the new gains."""
+    """A throwaway strip and two gain-0 probes (pre timing), the wide strip, then two probes at the new gains."""
     spec = SCENARIOS["colour"]
     fake = FakeAd9826(white=spec["white"], ir_white=spec["ir_white"])
     asic = _make_asic(monkeypatch, fake)
@@ -285,9 +285,10 @@ def test_search_afe_follows_silverfast_strip_sequence(monkeypatch) -> None:
 
     gain = result.gains[0]
     assert seen == [
+        (3072, 11107, 0x02, (0, 0x80)),  # throwaway (#124)
         (3072, 11107, 0x02, (0, 0x80)),
         (3072, 11107, 0x02, (0, 0xFF)),
-        (AFE_WIDE_BYTES, 16040, 0x17, (0, seen[2][3][1])),
+        (AFE_WIDE_BYTES, 16040, 0x17, (0, seen[3][3][1])),
         (3072, 16040, 0x17, (gain, 0x80)),
         (3072, 16040, 0x17, (gain, 0xFF)),
     ]
@@ -312,9 +313,10 @@ def test_search_afe_falls_back_per_channel_when_black_does_not_move(monkeypatch,
     result = asic.search_afe(method="transparency")
 
     assert decode_afe_offset(result.offsets[0]) == AFE_FALLBACK_OFFSETS_COLOR[0]
-    # Writes 12-17 program the pre-offsets (gains 0x02-0x04, then offsets 0x05-0x07).
-    assert fake.writes[15][0] == 0x05
-    assert decode_afe_offset(fake.writes[15][1]) == AFE_FALLBACK_PRE_OFFSETS[0]
+    # Writes 18-23 program the pre-offsets (gains 0x02-0x04, then offsets 0x05-0x07),
+    # after the throwaway strip's FE setup (6-11) and the two probes (12-17).
+    assert fake.writes[21][0] == 0x05
+    assert decode_afe_offset(fake.writes[21][1]) == AFE_FALLBACK_PRE_OFFSETS[0]
     assert "optical black barely moved" in caplog.text
 
 
