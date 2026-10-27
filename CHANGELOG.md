@@ -23,6 +23,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **Fallback.** If a channel's black does not respond to the offset probe, that channel uses SilverFast's typical codes and a warning is logged.
   - **Recalibration.** Calibration cache v15 discards older entries, so the first scan after upgrading recalibrates.
 
+### Changed
+
+- **GL128 positioning feeds run under the image pass's registers, as SilverFast's do** (8200i SE, 8100 V2, 8300i SE).
+  - **SilverFast.** It programs the scan's own registers before both positioning feeds, on every model and PPI: DPISET, pixel clocks, LPERIOD, window, exposure, `0x1D` and the depth pair `0x33`/`0xAF`. The feed itself only sets `0x01=0x22`, `0x05=0x48`, `0x02=0x18`, the feed length and `0xAF` (`0x7F` for the reference feed, `0xFF` for the scan-start feed).
+  - **Before.** pyopticfilm used a fixed recipe: DPISET 200, clocks `02`, exposure 14000 even on the 8300i SE, and `0x33=0x04` against `0xAF=0xFF`. #102 showed `0xAF` changes the actual feed distance, and `0x33` is its partner.
+  - **Checked against SilverFast.** The feeds now match its captures register for register on the 8300i SE (900–7200 ppi, colour and IR) and the 8100 V2 at 7200 ppi; the remaining differences belong to other registers.
+  - **On the 8200i SE.** Three scans each before and after landed the frame within the scanner's normal jitter (about 0.5 rows at 1800 ppi), and feed times were unchanged.
+
 ### Notes for integrators
 
 - `Gl128.search_afe(method=..., resolution=...)` replaces `search_afe(config=..., method=...)`. `resolution` selects SilverFast's strip line periods for that scan. `Gl128.acquire_afe_strip` takes an optional `timing=AfeStripTiming(...)`.
@@ -32,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - from `pyopticfilm.scan.calib_gl128`: `adaptive_afe_white_target`, `AFE_WHITE_TARGET_SF` / `_MIN` / `_MAX`, `AFE_OFFSET_MIN`, `AFE_GAIN_COARSE_DIVISOR` and `COLOR_AFE_SESSION04_OFFSETS`;
   - from `pyopticfilm.asic.gl128`: `IR_AFE_FALLBACK_GAINS`, `IR_AFE_FALLBACK_OFFSETS` and `IR_AFE_HEALTHY_MEAN`.
 - `search_afe_codes` and `AfeSearchConfig` remain for GL845.
+- `Gl128.position_for_full_frame_scan(..., scan_regs=None)` takes the image pass's register set; both feeds then run under it. Without it the fixed feed recipe is used.
 
 ## [1.3.8] - 2026-10-26
 
