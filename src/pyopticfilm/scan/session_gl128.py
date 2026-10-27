@@ -475,6 +475,7 @@ class Gl128ScanSession(ScanSession):
         from pyopticfilm.scan.geometry import compute_geometry
         from pyopticfilm.scan.me_debug import MeScanDebug, MultiPassDebug, SlotStackDebug
         from pyopticfilm.scan.me_exposure import select_long_exposure
+        from pyopticfilm.scan.pipeline import HOST_CALIB_BORDER_INSET
 
         if mode == "infrared":
             raise ValueError("Use mode='color' with infrared=True for colour+IR scans")
@@ -717,8 +718,15 @@ class Gl128ScanSession(ScanSession):
                     geometry.resolution,
                     int(getattr(model, "me_hardware_max_exposure", exp_long)),
                 )
+                # Meter the film, not the holder: the default frame carries ~5 %
+                # near-black holder rows/columns, right at the 5th percentile,
+                # which drove the proposal to the cap. Same inset as the makeup.
+                region = self.pipeline._inset_slice(
+                    rgb_short.shape[0], rgb_short.shape[1], HOST_CALIB_BORDER_INSET
+                )
+                metered = rgb_short[region] if region is not None else rgb_short
                 exposure_decision = select_long_exposure(
-                    rgb_short,
+                    metered,
                     exp_short,
                     black_level=float(getattr(model, "me_black_level", 0.0)),
                     dense_percentile=float(getattr(model, "me_dense_percentile", 5.0)),
