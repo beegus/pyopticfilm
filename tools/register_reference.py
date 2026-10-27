@@ -563,14 +563,20 @@ REGISTERS: tuple[RegisterEntry, ...] = (
     ),
     RegisterEntry(
         addr="0x1D",
-        name="Unnamed, constant in SCAN_REGS (0x80) except during shading at 3600/7200dpi and the image pass at 7200dpi",
+        name="LINESEL (low 5 bits): 0x80 in SCAN_REGS, raised on shading strips at high DPI and on the 7200dpi image pass and feeds",
         asic=AsicFamily.GL128,
         scope=(SCOPE_ALL_GL128,),
         meaning=(
-            "Not in Gl128Registers. pyopticfilm writes 0x80 (SCAN_REGS) for "
-            "every pass except the 7200dpi image pass, which gets 0x81 like "
-            "SilverFast (session_gl128.py _IMAGE_REG_1D_LOW_BY_DPI, #98). "
-            "Shading strips and positioning feeds stay 0x80.\n\n"
+            "Not in Gl128Registers. pyopticfilm writes SilverFast's values on "
+            "every pass. AFE strips: 0x80. Dark and white shading strips: "
+            "0x81 at 3600dpi and 0x82 at 7200dpi on the 8200i SE / 8100 V2, "
+            "0x81 at 2400/3600dpi and 0x83 at 7200dpi on the 8300i SE "
+            "(Gl128Common.shading_linesel_for). Image pass: 0x81 at 7200dpi "
+            "(session_gl128.py _IMAGE_REG_1D_LOW_BY_DPI, #98); positioning "
+            "feeds carry the image pass's value (#122). With the strip value "
+            "SilverFast uploads a white-strip motor table of REG_EXPOSURE × "
+            "(LINESEL + 1) / 4 (Gl128Common.shading_white_motor_period), "
+            "not the image pass's.\n\n"
             "CORRECTED 2026-09-11: this entry previously claimed the flip "
             "happens 'only for the 7200dpi image pass ... never during "
             "shading'. An independent re-decode (tools/capture_ledger.py, "
@@ -672,12 +678,12 @@ REGISTERS: tuple[RegisterEntry, ...] = (
             "mid-scan. The experimental_reg1d_7200 flag was removed. #98 "
             "later shipped 0x81 for the 7200dpi image pass together with "
             "SilverFast's doubled per-channel exposure table, and that "
-            "combination scans cleanly on all three models. The shading "
-            "values (0x81 at 3600dpi, 0x82/0x83 at 7200dpi) and the 0x81 "
-            "SilverFast writes on 7200dpi positioning feeds are still not "
-            "replicated. Do not set them without new bench evidence that "
-            "isolates the change, per the 0x3D-0x3F FEEDL incident's own "
-            "lesson."
+            "combination scans cleanly on all three models. The 0x81 7200dpi "
+            "positioning feeds (#122) and the shading-strip values with "
+            "SilverFast's white-strip motor table ran cleanly on the 8200i SE "
+            "on 2026-10-27 (600-7200dpi, image unchanged); the 8300i SE and "
+            "8100 V2 strip values come from their own SilverFast captures. "
+            "Keep the strip value and the white-strip motor table together."
         ),
     ),
     RegisterEntry(
@@ -945,7 +951,8 @@ REGISTERS: tuple[RegisterEntry, ...] = (
             "AHB_CHANNEL_R/G/B (per-channel RAM exposure; 256 16-bit words that "
             "are the scan motor's step periods: flat on the 8200i SE and 8100 V2, "
             "SilverFast's acceleration ramp clamped at REG_EXPOSURE × ((0x1D & 0x1F) + 1) "
-            "× asic_dpi / 14400 on the 8300i SE since 1.3.7), AHB_SLOPE_SCAN/"
+            "× asic_dpi / 14400 on the 8300i SE since 1.3.7; the white shading "
+            "strip uses REG_EXPOSURE × (LINESEL + 1) / 4 on every model), AHB_SLOPE_SCAN/"
             "AHB_SLOPE_FAST (motor ramp tables), AHB_SHADING (shading "
             "correction table) — bulk-upload memory windows, distinct from "
             "the ordinary 1-byte register address space."

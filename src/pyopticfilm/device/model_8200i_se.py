@@ -50,6 +50,7 @@ from pyopticfilm.device.gl128_common import (
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
     SCAN_REGS,
+    SHADING_LINESEL_BY_DPI,
     Gl128Common,
 )
 
@@ -120,6 +121,9 @@ class Model8200iSE(Gl128Common):
     #: Session 13: the bulk buffer holds ``LINCNT / 2`` rows, two per output line.
     usb_image_lincnt_half_lines: bool = True
     image_lincnt_per_line: int = 4
+    shading_linesel_by_dpi: Mapping[int, int] = field(
+        default_factory=lambda: dict(SHADING_LINESEL_BY_DPI)
+    )
     pixel_clock_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(PIXEL_CLOCK_BY_DPI)
     )

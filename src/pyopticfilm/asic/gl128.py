@@ -754,6 +754,9 @@ class Gl128:
         self._write(0x2B, int(dummy))
         self._write(0xA5, int(clk_a))
         self._write(0xAB, int(clk_b))
+        # SilverFast raises LINESEL on both strips at high PPI (model table).
+        reg1d = self._reg_cache.get(0x1D, 0x80) & ~0x1F
+        self._write(0x1D, reg1d | self.model.shading_linesel_for(int(resolution)))
         self.protocol.write_u24(r.REG_LINCNT, int(lines))
         self.protocol.write_u16(r.REG_DPISET, dpi_calib)
         self.protocol.write_u24(r.REG_STRPIXEL, start)
@@ -1009,7 +1012,13 @@ class Gl128:
         if not infrared:
             self.lamp_on()
             self._log_lamp_state(where="shading pre-white")
-        self.upload_tables(resolution=resolution, shading=False, slope=False)
+        # SilverFast's white-strip motor table, not the image pass's.
+        self.upload_tables(
+            resolution=resolution,
+            shading=False,
+            slope=False,
+            channel_exposure=self.model.shading_white_motor_period(resolution),
+        )
         # Arm DVDSET on the unity table for the white strip, colour and IR alike
         # (SF 8300i SE ladder / 8200i SE session 05: IR white 0x01=0x23, 0x02=0x10).
         reg01 = (self._reg_cache.get(r.REG_0x01, 0x22) | r.SHDAREA | r.DVDSET) & ~r.SCAN
