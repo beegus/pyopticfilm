@@ -226,7 +226,10 @@ class Scanner:
         """Run dark/white shading (or IR white-only) and update the cache.
 
         GL128 AFE/ASIC shading runs with the motor disarmed, then re-arms so
-        the following image feed can move.
+        the following image feed can move. GL128 ``mode="infrared"`` runs the
+        IR calibration every IR scan runs before its IR pass (IR AFE + IR white
+        strip) and returns it without caching it; it raises
+        :class:`~pyopticfilm.exceptions.CalibrationError` when rejected.
         """
         self._ensure_scan_ready()
         self._ensure_open()

@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     It reproduces every SilverFast dark and white strip in the 8200i SE and 8100 V2 captures (66 strips, full frames and crops) and the 8300i SE dark strips.
   - **What changes.** Both models now use the rule for each strip's own window. The 8100 V2's hand-coded 7200 ppi white override is gone; the rule gives the same `0x10`. The 8300i SE uses the rule for its dark strip and keeps its own measured white-strip clocks.
   - **Recalibration.** Calibration cache v17 discards older entries.
+- **`Scanner.calibrate(mode="infrared")` never started its strips on GL128 scanners** (8200i SE, 8300i SE). The call fell through to the GL845 calibration path, which programs a stationary white strip with motor power on (`0x02=0x10`) and never writes START (`0x0F=0`). On hardware that strip cannot produce data, and the cached result was never used by IR scans anyway. GL128 `mode="infrared"` now runs the same IR calibration every IR scan runs before its IR pass (IR AFE search and IR strips). It returns an entry with the IR white profile and IR AFE codes, does not cache it, and raises `CalibrationError` if the IR calibration is rejected. Checked on an 8200i SE: both IR strips start, the call takes about 5 s, and a colour + IR scan afterwards is unaffected.
 
 ### Changed
 

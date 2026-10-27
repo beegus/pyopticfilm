@@ -122,3 +122,62 @@ def test_infrared_scan_calibrates_ir_before_acquire(tmp_path: Path, monkeypatch)
     session.run(resolution=geometry.resolution, mode="infrared", geometry=geometry)
 
     assert order == ["ir_afe", "ir_white", "acquire"]
+
+
+def test_public_infrared_calibrate_runs_the_gl128_ir_calibration(tmp_path: Path):
+    """``Calibrator.run(mode="infrared")`` used to take the GL845 path, which never
+    started the GL128 white strip (``0x0F=0``). It now runs the IR scans' own
+    calibration and reports it, without caching it."""
+    asic = _asic()
+    _wire(asic, flatten_ok=True)
+    cache = tmp_path / "calib.json"
+    cal = Calibrator(asic, cache_path=cache, model=MODEL_8200I_SE)
+    geometry = _geometry()
+
+    entry = cal.run(resolution=geometry.resolution, mode="infrared", geometry=geometry, force=True)
+
+    asic.search_afe.assert_called_once()
+    assert asic.run_asic_shading.call_args.kwargs["method"] == "infrared"
+    assert entry.method == "infrared"
+    assert entry.pixels == geometry.pixels
+    assert int(entry.dark.max()) == 0
+    assert int(entry.white[0, 1]) == 50000
+    assert (entry.afe_gains, entry.afe_offsets) == (IR_AFE.gains, IR_AFE.offsets)
+    assert not cache.exists()
+
+
+def test_public_infrared_calibrate_raises_when_rejected(tmp_path: Path):
+    import pytest
+
+    from pyopticfilm.exceptions import CalibrationError
+
+    asic = _asic()
+    _wire(asic, flatten_ok=False)
+    cal = Calibrator(asic, cache_path=tmp_path / "calib.json", model=MODEL_8200I_SE)
+    with pytest.raises(CalibrationError, match="infrared calibration failed"):
+        cal.run(resolution=1800, mode="infrared", geometry=_geometry(), force=True)
+    assert asic.last_afe == COLOUR_AFE
+
+
+def test_public_infrared_calibrate_ignores_a_stale_cached_ir_entry(tmp_path: Path):
+    """An IR entry left by the old GL845 path must not short-circuit the measurement."""
+    from pyopticfilm.scan.calibrate import CalibEntry
+
+    asic = _asic()
+    _wire(asic, flatten_ok=True)
+    cal = Calibrator(asic, cache_path=tmp_path / "calib.json", model=MODEL_8200I_SE)
+    geometry = _geometry()
+    stale = CalibEntry(
+        method="infrared",
+        resolution=geometry.resolution,
+        startx=geometry.startx,
+        pixels=geometry.pixels,
+        dark=np.zeros((geometry.pixels, 3), dtype=np.uint16),
+        white=np.full((geometry.pixels, 3), 123, dtype=np.uint16),
+    )
+    cal.cache.upsert(stale)
+
+    entry = cal.run(resolution=geometry.resolution, mode="infrared", geometry=geometry)
+
+    asic.run_asic_shading.assert_called_once()
+    assert entry is not stale
