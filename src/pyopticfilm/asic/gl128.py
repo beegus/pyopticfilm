@@ -261,7 +261,7 @@ class Gl128:
         #: origin for the next feed pair is unknown.
         self._park_ok: bool = True
         #: Set after a successful :meth:`run_asic_shading` upload this session.
-        #: IR Lab never sets this — ASIC DVDSET clipped IR to full scale.
+        #: Infrared never sets this: the IR pass keeps DVDSET off (see run_asic_shading).
         self.asic_shading_ready = False
         #: Equalized per-column IR white (one value/column) for host flatten.
         self.last_ir_host_white: list[int] | None = None
@@ -917,9 +917,10 @@ class Gl128:
         Returns the final measured shading blob. Sets ``asic_shading_ready``.
         Image scans keep ``DVDSET`` when ready so the ASIC applies this table.
 
-        Colour white strip: DVDSET + ``MTRPWR|AGOHOME`` (AGOHOME during the
-        measure so SCAN-clear parks; SF is MTRPWR-only). Exposure AHB only
-        after unity; dark/white use capture clocks.
+        White strip (colour and IR): DVDSET on the unity table + ``MTRPWR|AGOHOME``
+        (AGOHOME during the measure so SCAN-clear parks; SF is MTRPWR-only), so
+        the white is averaged over the carriage travel. Exposure AHB only after
+        unity; dark/white use capture clocks.
 
         Pass ``method=\"infrared\"`` so the white strip runs under the IR LED
         (session 05: IR table uses zero dark terms + near-equal whites).
@@ -930,10 +931,13 @@ class Gl128:
         the image and DVDSET turns that into periodic dropouts.
 
         For ``method=\"infrared\"``, the optical dark strip is diagnostic only —
-        the uploaded table dark is forced to zero (session 05). Live ASIC DVDSET
-        clipped IR to full scale, so infrared **never** sets
-        ``asic_shading_ready``; a validated white profile is stored for host
-        flatten instead (:attr:`ir_host_flatten_ready`).
+        the uploaded table dark is forced to zero (session 05). Unlike
+        SilverFast, infrared **never** sets ``asic_shading_ready``: on the
+        8200i SE (2026-10-27) a per-pixel IR table imprinted the white strip's
+        column structure, about 1.4-1.8x the fine vertical streaking of the
+        host flatten, which corrects only the smoothed falloff (it no longer
+        clips). A validated white profile is stored for that host flatten
+        instead (:attr:`ir_host_flatten_ready`).
 
         Refuses if ``_motor_moves_enabled`` — Lab must disarm before shading and
         re-arm only for the image feeds (capture order: shade, then motor).
@@ -1015,9 +1019,10 @@ class Gl128:
             slope=False,
             channel_exposure=self.model.shading_white_motor_period(resolution),
         )
-        if not infrared:
-            reg01 = (self._reg_cache.get(r.REG_0x01, 0x22) | r.SHDAREA | r.DVDSET) & ~r.SCAN
-            self._write(r.REG_0x01, reg01)
+        # Arm DVDSET on the unity table for the white strip, colour and IR alike
+        # (SF 8300i SE ladder / 8200i SE session 05: IR white 0x01=0x23, 0x02=0x10).
+        reg01 = (self._reg_cache.get(r.REG_0x01, 0x22) | r.SHDAREA | r.DVDSET) & ~r.SCAN
+        self._write(r.REG_0x01, reg01)
 
         if infrared:
             self.lamp_on()
@@ -1036,10 +1041,12 @@ class Gl128:
                 self._write(r.REG_0x03, r.XPASEL)
                 self._apply_infrared(enabled=True)
         time.sleep(0.5)
-        # SF session 03: after unity, white strip with 0x01=0x23 (SHDAREA|DVDSET).
-        # At unity gain the ASIC returns ``raw - dark``, so ~50-57k here is the
-        # expected reading; the gains below turn that into the flattening table.
-        white_raw = self.acquire_shading_strip(resolution=resolution, pixels=n, dvdset=not infrared, **window)
+        # SF session 03: after unity, white strip with 0x01=0x23 (SHDAREA|DVDSET)
+        # and the motor running, so the white reference is averaged over the
+        # carriage travel rather than read at one spot. At unity gain the ASIC
+        # returns ``raw - dark`` (IR dark is 0), so ~50-57k here is the expected
+        # reading; the gains below turn that into the flattening table.
+        white_raw = self.acquire_shading_strip(resolution=resolution, pixels=n, dvdset=True, **window)
         white = average_rgb16_columns(white_raw, pixels=n, lines=SHADING_LINES, planar=strip_planar)
         raw_white: list[tuple[int, int, int]] | None = None
         self.last_host_calib_dark = None
@@ -1061,8 +1068,9 @@ class Gl128:
         self.upload_shading_table(measured)
         self._write(self.registers.REG_0x02, 0x00)
         self._require_carriage_at_home("ASIC shading end")
-        # IR: never arm ASIC DVDSET (live HW clipped to 0xFFFF). Store a host
-        # white profile when the table validates; image flatten uses that.
+        # IR: never arm ASIC DVDSET — a per-pixel IR table streaks the IR plane
+        # (see docstring). Store a host white profile when the table validates;
+        # the smoothed image flatten uses that.
         if infrared:
             ok, reason = validate_ir_shading_table(
                 dark[:n],
