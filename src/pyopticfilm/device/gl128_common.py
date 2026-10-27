@@ -13,6 +13,7 @@ Adding a field to :class:`Gl128Common` without listing it in
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any
@@ -166,20 +167,24 @@ LPERIOD_BY_DPI: dict[int, int] = {
     for dpi in (150, 300, 600, 720, 900, 1200, 1440, 1800, 2400, 3600, 7200)
 }
 
-#: Dark shading strip ``0x2B`` / ``0xA5`` / ``0xAB`` (session 03/04; DVDSET off).
-#: White strip uses :data:`DUMMY_BY_DPI` / :data:`PIXEL_CLOCK_BY_DPI` instead.
-SHADING_DARK_DUMMY_BY_DPI: dict[int, int] = {
-    1200: 0x04,
-    1800: 0x06,
-}
-SHADING_DARK_PIXEL_CLOCK_A_BY_DPI: dict[int, int] = {
-    1200: 0x01,
-    1800: 0x01,
-}
-SHADING_DARK_PIXEL_CLOCK_B_BY_DPI: dict[int, int] = {
-    1200: 0x30,
-    1800: 0x30,
-}
+
+def shading_clocks_for_window(asic_dpi: int, span_native: int, *, dvdset: bool) -> tuple[int, int, int]:
+    """``(0x2B, 0xA5, 0xAB)`` SilverFast writes for a shading strip ``span_native`` wide.
+
+    ``0x2B`` counts 8 KiB of strip-line buffer (16-bit RGB, 6 bytes per pixel):
+    the dark strip (DVDSET off) needs 3 lines' worth with clocks ``01/30``; the
+    white strip 1 line (2 from 3600 ppi) with clocks ``02/02`` (``01/01`` from
+    3600 ppi). Exact for all 66 dark and white strips in the 8200i SE sessions
+    03-14 and 8100 V2 sessions 03-07, full frames and crops (spans 6552-10370),
+    and for the 8300i SE dark strips; the 8300i SE white strip has its own clocks.
+    """
+    pixels = int(span_native) * int(asic_dpi) / _NATIVE_DPI
+    line_bytes = 6 * pixels
+    if not dvdset:
+        return math.ceil(3 * line_bytes / 8192), 0x01, 0x30
+    high = int(asic_dpi) >= 3600
+    clk = 0x01 if high else 0x02
+    return math.ceil((2 if high else 1) * line_bytes / 8192), clk, clk
 
 #: ``0xA5``/``0xAB`` and ``0x2B`` — replayed verbatim from session 13.
 PIXEL_CLOCK_BY_DPI: dict[int, int] = {
@@ -334,9 +339,6 @@ GL128_SHARED_FIELDS: frozenset[str] = frozenset(
         "register_dpiset_by_dpi",
         "lperiod_by_dpi",
         "output_pixel_offset_by_dpi",
-        "shading_dark_dummy_by_dpi",
-        "shading_dark_pixel_clock_a_by_dpi",
-        "shading_dark_pixel_clock_b_by_dpi",
         "register_dpihw",
         "exposure_long",
         "multi_exposure_factor",
@@ -433,15 +435,6 @@ class Gl128Common:
     lperiod_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(LPERIOD_BY_DPI))
     output_pixel_offset_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(OUTPUT_PIXEL_OFFSET)
-    )
-    shading_dark_dummy_by_dpi: Mapping[int, int] = field(
-        default_factory=lambda: dict(SHADING_DARK_DUMMY_BY_DPI)
-    )
-    shading_dark_pixel_clock_a_by_dpi: Mapping[int, int] = field(
-        default_factory=lambda: dict(SHADING_DARK_PIXEL_CLOCK_A_BY_DPI)
-    )
-    shading_dark_pixel_clock_b_by_dpi: Mapping[int, int] = field(
-        default_factory=lambda: dict(SHADING_DARK_PIXEL_CLOCK_B_BY_DPI)
     )
 
     register_dpihw: int = 1200
@@ -557,22 +550,17 @@ class Gl128Common:
 
         return SLOPE_TABLE_SLOW
 
-    def shading_strip_clocks(self, resolution: int, *, dvdset: bool) -> tuple[int, int, int]:
-        """``(0x2B, 0xA5, 0xAB)`` for a shading strip.
+    def shading_strip_clocks(
+        self, resolution: int, *, dvdset: bool, span: int | None = None
+    ) -> tuple[int, int, int]:
+        """``(0x2B, 0xA5, 0xAB)`` for a shading strip ``span`` native pixels wide.
 
-        White (DVDSET on) uses the image-dpi tables. Dark (DVDSET off) uses the
-        session 03/04 dark-strip clocks when known; otherwise image-dpi.
+        ``span`` is the strip window's ``END - STR``; the default is SilverFast's
+        full frame. See :func:`shading_clocks_for_window`.
         """
-        key = self.asic_dpi_for(resolution)
-        if not dvdset:
-            dummy_map = self.shading_dark_dummy_by_dpi
-            clk_a_map = self.shading_dark_pixel_clock_a_by_dpi
-            clk_b_map = self.shading_dark_pixel_clock_b_by_dpi
-            if key in dummy_map and key in clk_a_map and key in clk_b_map:
-                return int(dummy_map[key]), int(clk_a_map[key]), int(clk_b_map[key])
-        dummy = int(self.dummy_by_dpi.get(key, 0x02))
-        clk = int(self.pixel_clock_by_dpi.get(key, 0x02))
-        return dummy, clk, clk
+        if span is None:
+            span = FULL_FRAME_SPAN_NATIVE
+        return shading_clocks_for_window(self.asic_dpi_for(resolution), int(span), dvdset=dvdset)
 
     def channel_exposure_for(self, resolution: int, *, exposure: int | None = None) -> int:
         """Per-channel RAM exposure, ``exposure // oversample`` in the captures."""

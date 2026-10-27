@@ -59,7 +59,7 @@ independently proven on V2.
 | 3 | Full-frame feed 2 | 13128 | 13128 (TA top; session 03 / #67) |
 | 4 | PPI-ladder feed 2 | 13128 | 13560 |
 | 5 | `LPERIOD` at every captured PPI | same window rule (§5); full frame | same rule; session 13 values are its crop |
-| 6 | White shading dummy `0x2B` @ 7200 | `0x10` | `0x17` |
+| 6 | White shading dummy `0x2B` @ 7200 | `0x10` | `0x10` (same strip-width rule; was `0x17`) |
 | 7 | Ladder image `LINCNT` | taller crop (see geometry) | session 13 table |
 
 `LPERIOD` was once listed as a V2 difference (16035 vs 15963 at 7200). It is
@@ -82,7 +82,7 @@ Positioning slope **order** is not a divergence: both models upload
 | 6 | Image / feed exposure | **15000** | neither (SE/V2 use 14000) |
 | 7 | Image-pass pixel clock `0xA5`/`0xAB` | different from SE/V2 (larger bytes; speed meaning unproven) | neither |
 | 8 | Image-pass dummy `0x2B` | higher than SE `DUMMY_BY_DPI` at every measured PPI | neither |
-| 9 | White shading dummy @ 7200 | `0x26` | neither (V2 `0x10`, SE `0x17`) |
+| 9 | White shading dummy @ 7200 | `0x26` | neither (SE/V2 `0x10`) |
 | 10 | Slope ROM payloads | CUSTOM heads `0x32BB` then `0x846A` (not SE `0x1FB4`/`0x16DE`) | neither |
 | 11 | Per-scan sensor timing (`0x06`/`0x0B`/`0x52`–`0x57`/`0x5A`/`0x5B`/`0x70`–`0x73`) | own values (§10.7) | neither |
 
@@ -365,15 +365,22 @@ only known for VueScan preview/panorama, not a SilverFast ladder.
 Image dummy tracks the SE `DUMMY_BY_DPI` table on V2. 135i is only known
 at 7200, where it matches.
 
-### Shading-strip dummy `0x2B` @ 7200
+### Shading-strip clocks `0x2B` / `0xA5` / `0xAB`
 
-| Strip | 8100 V2 | 8200i SE | 135i | Verdict |
-|-------|---------|----------|------|---------|
-| Dark (DVDSET off) | `0x17` | `0x17` | unknown | inconclusive |
-| White (DVDSET on) | `0x10` | `0x17` | unknown | different |
+SilverFast's values depend on the strip width, on both models. With 6 bytes per
+pixel and `pixels = (END − STR) × ppi / 7200`:
 
-This is the V2-only shading override in `Model8100V2.shading_strip_clocks`.
-The image pass stays `0x17` on both manual feeders.
+| Strip | `0x2B` | `0xA5` / `0xAB` |
+|-------|--------|-----------------|
+| Dark (DVDSET off) | `ceil(3 × line bytes / 8192)` | `01` / `30` |
+| White (DVDSET on) | `ceil(line bytes / 8192)`, ×2 from 3600 ppi | `02` / `02`, `01` / `01` from 3600 ppi |
+
+This reproduces every SilverFast strip in the SE sessions 03–14 and V2 sessions
+03–07 (66 strips, full frames and crops from span 6552 to 10370), and the 8300i SE
+dark strips (`shading_clocks_for_window` in `device/gl128_common.py`). At 7200 ppi
+on a full frame it gives dark `0x17` and white `0x10` on both models. The old SE
+white `0x17` was the image dummy, not a model difference. The image pass stays
+`0x17` on both. The 8300i SE white strip uses its own clocks.
 
 ### Pixel clock `0xA5` / `0xAB` (image pass)
 
@@ -395,8 +402,8 @@ The image pass stays `0x17` on both manual feeders.
 
 LPERIOD is not a model split: it follows the window width (§5); 135i 7200 is
 a third constant. DPISET at 7200 and image
-dummy at 7200 are shared. White-shading dummy at 7200 is the other V2
-timing/clock oddity. 135i image-pass exposure is not in the decoded
+dummy at 7200 are shared. The shading-strip clocks are shared too (one
+strip-width rule). 135i image-pass exposure is not in the decoded
 notes used here.
 
 ---

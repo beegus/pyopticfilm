@@ -26,6 +26,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **The rule.** SilverFast's value depends on the window, not the model: `10851 + pixels / 4` (`/ 2` from 3600 ppi), with `pixels = (END − STR) × ppi / 7200`. It reproduces exactly every SilverFast LPERIOD checked in the captures: image passes, shading strips and AFE strips, full frames and crops (spans 9912–10370), on all three models.
   - **What changes.** pyopticfilm now programs the rule for each pass's own window, so full frames match SilverFast and crops get SilverFast's lower values too. The AFE strip line periods from the SilverFast AFE fix come from the same rule.
   - **Recalibration.** Calibration cache v16 discards older entries, because the shading strips on the 8200i SE and 8100 V2 now run at the new value.
+- **GL128 dark and white shading strips used the wrong clock settings at most resolutions** (8200i SE, 8100 V2). The dark and white strips that calibration reads at home are clocked and buffered by `0x2B`, `0xA5` and `0xAB`.
+  - **Before.** pyopticfilm wrote SilverFast's dark-strip values only at 1200 and 1800 ppi, and the image pass's values everywhere else. At 600 ppi that was `01/02/02` where SilverFast writes `02/01/30`; at 3600 ppi `04/01/01` where it writes `0C/01/30`. The white strip was wrong at 2400 ppi (`A5/AB` `01` instead of `02`) and 3600 ppi (`0x2B` `04` instead of `08`). None of it followed the window width.
+  - **The rule.** SilverFast's values depend on the strip width, with `pixels = (END − STR) × ppi / 7200` and 6 bytes per pixel:
+    - dark: `0x2B = ceil(3 × line bytes / 8192)`, `0xA5/0xAB = 01/30`;
+    - white: `0x2B = ceil(line bytes / 8192)` (doubled from 3600 ppi), `0xA5/0xAB = 02/02` (`01/01` from 3600 ppi).
+
+    It reproduces every SilverFast dark and white strip in the 8200i SE and 8100 V2 captures (66 strips, full frames and crops) and the 8300i SE dark strips.
+  - **What changes.** Both models now use the rule for each strip's own window. The 8100 V2's hand-coded 7200 ppi white override is gone; the rule gives the same `0x10`. The 8300i SE uses the rule for its dark strip and keeps its own measured white-strip clocks.
+  - **Recalibration.** Calibration cache v17 discards older entries.
 
 ### Changed
 
@@ -46,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `search_afe_codes` and `AfeSearchConfig` remain for GL845.
 - `Gl128Common.line_period_for(resolution, *, span=None)` takes the window span (`END − STR`, native pixels) and defaults to SilverFast's full frame. New in `pyopticfilm.device.gl128_common`: `lperiod_for_window`, `lperiod_for_line`, `LPERIOD_BASE` and `FULL_FRAME_SPAN_NATIVE`. `lperiod_by_dpi` is now one shared full-frame table on `Gl128Common`, no longer declared per model.
 - `Gl128.position_for_full_frame_scan(..., scan_regs=None)` takes the image pass's register set; both feeds then run under it. Without it the fixed feed recipe is used.
+- `Gl128Common.shading_strip_clocks(resolution, *, dvdset, span=None)` takes the strip window span and defaults to SilverFast's full frame. New in `pyopticfilm.device.gl128_common`: `shading_clocks_for_window`. Removed: the `shading_dark_dummy_by_dpi` / `shading_dark_pixel_clock_a_by_dpi` / `shading_dark_pixel_clock_b_by_dpi` fields and the `SHADING_DARK_*_BY_DPI` tables.
 
 ## [1.3.8] - 2026-10-26
 

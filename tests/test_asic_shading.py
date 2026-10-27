@@ -779,9 +779,10 @@ def test_shading_strip_setup_sets_dvdset_when_requested():
     # SF white clears 0x3B/0xA3; _SCAN_REGS alone would leave 0x3B=1.
     assert asic._reg_cache[0x3B] == 0x00
     assert asic._reg_cache[0xA3] == 0x00
-    assert asic._reg_cache[0x2B] == MODEL_8200I_SE.dummy_by_dpi[1800]
-    assert asic._reg_cache[0xA5] == MODEL_8200I_SE.pixel_clock_by_dpi[1800]
-    assert asic._reg_cache[0xAB] == MODEL_8200I_SE.pixel_clock_by_dpi[1800]
+    # Strip clocks follow the strip's own window (SilverFast's width rule).
+    start, end, _ = asic._shading_window(pixels=100, resolution=1800, strpixel=None, endpixel=None, dpiset=None)
+    white = MODEL_8200I_SE.shading_strip_clocks(1800, dvdset=True, span=end - start)
+    assert (asic._reg_cache[0x2B], asic._reg_cache[0xA5], asic._reg_cache[0xAB]) == white
     proto.write_u24.reset_mock()
     asic._setup_shading_strip_regs(pixels=100, lines=128, resolution=1800, dvdset=False)
     asic._apply_stationary_scan_regs.assert_called_once()
@@ -789,7 +790,7 @@ def test_shading_strip_setup_sets_dvdset_when_requested():
     assert not (asic._reg_cache[0x01] & 0x20)
     assert asic._reg_cache[r.REG_0x02] == 0x00
     assert asic._reg_cache[0xA3] == 0x01  # SF dark
-    dark_dummy, dark_a, dark_b = MODEL_8200I_SE.shading_strip_clocks(1800, dvdset=False)
+    dark_dummy, dark_a, dark_b = MODEL_8200I_SE.shading_strip_clocks(1800, dvdset=False, span=end - start)
     assert asic._reg_cache[0x2B] == dark_dummy
     assert asic._reg_cache[0xA5] == dark_a
     assert asic._reg_cache[0xAB] == dark_b
