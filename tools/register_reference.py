@@ -424,16 +424,29 @@ REGISTERS: tuple[RegisterEntry, ...] = (
         name="REG_LPERIOD",
         asic=AsicFamily.GL128,
         scope=(SCOPE_ALL_GL128,),
-        meaning="24-bit BE line exposure period; per-DPI table (LPERIOD_BY_DPI in device/gl128_common.py).",
+        meaning=(
+            "24-bit BE. SilverFast's value depends on the window, not the model: "
+            "10851 + pixels read per line / 4 (/ 2 from 3600 ppi), where pixels = "
+            "(END - STR) x ppi / 7200 for image passes and shading strips, and 512 / "
+            "10378 for the AFE strips. Exact for every SilverFast write in the "
+            "captures, full frames and crops, on all three models "
+            "(device/gl128_common.py lperiod_for_window / lperiod_for_line). Named "
+            "LPERIOD by pyopticfilm; the vendor log calls 0x7D 'lperiod', so this may "
+            "be a buffer threshold derived from line size."
+        ),
         confidence=Confidence.CONFIRMED,
-        citations=_c("registers.py Gl128Registers", "device/gl128_common.py LPERIOD_BY_DPI (session 13_ppi_ladder)"),
+        citations=_c(
+            "registers.py Gl128Registers",
+            "device/gl128_common.py lperiod_for_window",
+            "8200i-se sessions 03-14, 8100-v2 sessions 03-07, 8300i SE PPI ladder (GL128 parity audit 2026-10-26)",
+        ),
     ),
     RegisterEntry(
         addr="0x28-0x2A",
         name="REG_LPERIOD — V2 7200dpi shipped value",
         asic=AsicFamily.GL128,
         scope=(SCOPE_8100_V2,),
-        meaning="Shipped override: 16035 (vs the shared table's 15963), from a single capture session. See the SUSPECTED entry immediately below — a later, independent pair of captures disagrees with this value.",
+        meaning="Superseded: no longer a V2 override. 16035 is the full-frame value of the shared window rule (see REG_LPERIOD above); the old shared table's 15963 was the 8200i SE session-13 crop (span 10224). Kept as history.",
         confidence=Confidence.CONFIRMED,
         citations=_c("device/model_8100_v2.py module docstring, item 2 — capture evidence: frames 1661/2257/3203, register 0x28-0x2A = 0x003EA3 = 16035"),
     ),

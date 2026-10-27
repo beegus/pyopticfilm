@@ -47,7 +47,6 @@ from dataclasses import dataclass, field
 from pyopticfilm.device.gl128_common import (
     DUMMY_BY_DPI,
     LADDER_LINCNT_BY_DPI,
-    LPERIOD_BY_DPI,
     PIXEL_CLOCK_BY_DPI,
     PIXEL_CLOCK_LONG_BY_DPI,
     SCAN_REGS,
@@ -88,11 +87,6 @@ class Model8200iSE(Gl128Common):
     #: captures/8200i-se/09_y_crop_pair/NOTES.md) and overruns the window at high
     #: DPI (see #67).
     feed_to_scan_steps: int = 13128
-
-    #: SilverFast 9 PPI ladder (session 13). V2 overrides 7200 dpi only.
-    lperiod_by_dpi: Mapping[int, int] = field(
-        default_factory=lambda: dict(LPERIOD_BY_DPI)
-    )
 
     #: Capture image ``LINCNT`` for each second-feed distance, kept as a
     #: regression fixture. The motor gate uses :meth:`max_lincnt_for`.

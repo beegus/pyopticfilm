@@ -795,11 +795,11 @@ def test_shading_strip_setup_sets_dvdset_when_requested():
     assert asic._reg_cache[0xAB] == dark_b
 
 
-def test_capture_lperiod_matches_session_13():
-    assert MODEL_8200I_SE.line_period_for(1200) == 11277
-    assert MODEL_8200I_SE.line_period_for(1800) == 11490
-    assert MODEL_8200I_SE.line_period_for(3600) == 13407
-    assert MODEL_8200I_SE.line_period_for(7200) == 15963
+def test_capture_lperiod_matches_session_13_crop_and_full_frame():
+    # Session 13 ladder crop (span 10224) and SF full frames (span 10368).
+    for dpi, crop, full in ((1200, 11277, 11283), (1800, 11490, 11499), (3600, 13407, 13443), (7200, 15963, 16035)):
+        assert MODEL_8200I_SE.line_period_for(dpi, span=10224) == crop
+        assert MODEL_8200I_SE.line_period_for(dpi) == full
 
 
 def test_upload_tables_slope_false_skips_slope_ahb():

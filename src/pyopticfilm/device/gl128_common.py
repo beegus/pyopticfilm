@@ -133,21 +133,37 @@ OUTPUT_PIXEL_OFFSET: dict[int, int] = {
     7200: 120,
 }
 
-#: Line period written to ``0x28`` (24-bit BE).
-#: Values from session ``13_ppi_ladder`` (SilverFast image pass on the SE).
-#: 8100 V2 overrides 7200 dpi only (16035).
+#: ``LPERIOD`` (``0x28``, 24-bit BE) as SilverFast programs it: a constant plus
+#: the pixels read per line, /4 below 3600 ppi and /2 from 3600 ppi (the scan's
+#: ASIC dpi, also for the AFE strips of that scan). This reproduces every value
+#: in the SF captures exactly, on all three models: image passes and shading
+#: strips at every PPI, full frames and crops (8200i SE sessions 03-14, 8100 V2
+#: 03-07, 8300i SE ladder), and the AFE strips (512 px -> 10979 / 11107, 10378
+#: px -> 13445 / 16040). The old per-dpi table was the SE session-13 *crop*
+#: (span 10224), not a full frame; the V2 / 8300i "overrides" were full frames.
+LPERIOD_BASE = 10851
+LPERIOD_HIGH_FROM_DPI = 3600
+#: SilverFast's full-frame image window span in native pixels (STR 242, END 10610).
+FULL_FRAME_SPAN_NATIVE = 10368
+_NATIVE_DPI = 7200
+
+
+def lperiod_for_line(pixels: float, scan_dpi: int) -> int:
+    """``LPERIOD`` for ``pixels`` read per line in a scan at ASIC ``scan_dpi``."""
+    divisor = 2 if int(scan_dpi) >= LPERIOD_HIGH_FROM_DPI else 4
+    return int(LPERIOD_BASE + float(pixels) / divisor)
+
+
+def lperiod_for_window(asic_dpi: int, span_native: int) -> int:
+    """``LPERIOD`` for an image or shading window ``span_native`` (``END - STR``) wide."""
+    return lperiod_for_line(int(span_native) * int(asic_dpi) / _NATIVE_DPI, asic_dpi)
+
+
+#: Full-frame ``LPERIOD`` by scan PPI (150/300 scan at ASIC 600). Crops differ:
+#: use :meth:`Gl128Common.line_period_for` with the window span.
 LPERIOD_BY_DPI: dict[int, int] = {
-    150: 11064,
-    300: 11064,
-    600: 11064,
-    720: 11106,
-    900: 11170,
-    1200: 11277,
-    1440: 11362,
-    1800: 11490,
-    2400: 11703,
-    3600: 13407,
-    7200: 15963,
+    dpi: lperiod_for_window(max(dpi, 600), FULL_FRAME_SPAN_NATIVE)
+    for dpi in (150, 300, 600, 720, 900, 1200, 1440, 1800, 2400, 3600, 7200)
 }
 
 #: Dark shading strip ``0x2B`` / ``0xA5`` / ``0xAB`` (session 03/04; DVDSET off).
@@ -260,7 +276,6 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "supports_infrared",
         "scan_ready",
         "feed_to_scan_steps",
-        "lperiod_by_dpi",
         "max_image_lincnt_by_feed2",
         "ladder_feed2_steps",
         "ladder_lincnt_by_dpi",
@@ -317,6 +332,7 @@ GL128_SHARED_FIELDS: frozenset[str] = frozenset(
         "y_oversampled",
         "stagger_y_by_dpi",
         "register_dpiset_by_dpi",
+        "lperiod_by_dpi",
         "output_pixel_offset_by_dpi",
         "shading_dark_dummy_by_dpi",
         "shading_dark_pixel_clock_a_by_dpi",
@@ -413,6 +429,8 @@ class Gl128Common:
     register_dpiset_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(REGISTER_DPISET)
     )
+    #: Full-frame ``LPERIOD`` by PPI (same on every model); see :meth:`line_period_for`.
+    lperiod_by_dpi: Mapping[int, int] = field(default_factory=lambda: dict(LPERIOD_BY_DPI))
     output_pixel_offset_by_dpi: Mapping[int, int] = field(
         default_factory=lambda: dict(OUTPUT_PIXEL_OFFSET)
     )
@@ -471,7 +489,6 @@ class Gl128Common:
         usb_product_id: int
         supports_infrared: bool
         feed_to_scan_steps: int
-        lperiod_by_dpi: Mapping[int, int]
         max_image_lincnt_by_feed2: Mapping[int, int]
         ladder_feed2_steps: int
         ladder_lincnt_by_dpi: Mapping[int, int]
@@ -510,10 +527,15 @@ class Gl128Common:
         """Resolutions where ``scan(n_passes > 1)`` is accepted."""
         return tuple(dpi for dpi in self.resolutions_dpi if self.multi_pass_allowed_at(dpi))
 
-    def line_period_for(self, resolution: int) -> int:
-        """Value for ``LPERIOD`` (``0x28``) at ``resolution``."""
-        key = self.asic_dpi_for(resolution)
-        return self.lperiod_by_dpi.get(key, self.exposure_lperiod)
+    def line_period_for(self, resolution: int, *, span: int | None = None) -> int:
+        """``LPERIOD`` (``0x28``) at ``resolution`` for a window ``span`` native pixels wide.
+
+        ``span`` is ``END - STR`` of the image or shading window; the default is
+        SilverFast's full frame. See :func:`lperiod_for_window`.
+        """
+        if span is None:
+            span = FULL_FRAME_SPAN_NATIVE
+        return lperiod_for_window(self.asic_dpi_for(resolution), int(span))
 
     def slope_table_fast(self) -> tuple[int, ...]:
         """Motor ramp for feed2 / scan positioning (AHB slope windows).
