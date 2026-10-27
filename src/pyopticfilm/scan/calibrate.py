@@ -199,15 +199,33 @@ class CalibCache:
 
     With a ``fingerprint``, lookups only see entries stamped with it and
     :meth:`upsert` stamps new entries; other models' entries stay in the file.
+
+    Unless ``reuse_saved`` is set, entries loaded from the file (earlier
+    sessions) are kept for the file but never returned by :meth:`find`: the
+    lamp, sensor temperature, or even the scanner itself may have changed
+    since, and GL128 units all report the same USB serial, so nothing on the
+    wire tells one unit from another. Each session measures once per window.
     """
 
-    def __init__(self, path: Path | None = None, *, fingerprint: str | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        fingerprint: str | None = None,
+        reuse_saved: bool = False,
+    ) -> None:
         self.path = path or default_cache_path()
         self.fingerprint = fingerprint
+        self.reuse_saved = reuse_saved
         self.entries: list[CalibEntry] = []
+        #: ``id()`` of entries that came from the file rather than this session.
+        self._saved: set[int] = set()
+
+    def _same_model(self, entry: CalibEntry) -> bool:
+        return self.fingerprint is None or entry.fingerprint == self.fingerprint
 
     def _visible(self, entry: CalibEntry) -> bool:
-        return self.fingerprint is None or entry.fingerprint == self.fingerprint
+        return self._same_model(entry) and (self.reuse_saved or id(entry) not in self._saved)
 
     def load(self) -> bool:
         if not self.path.exists():
@@ -224,7 +242,13 @@ class CalibCache:
             self.entries = []
             return False
         self.entries = [CalibEntry.from_dict(e) for e in raw.get("entries", [])]
-        logger.info("Loaded %d calib entr(y/ies) from %s", len(self.entries), self.path)
+        self._saved = {id(e) for e in self.entries}
+        logger.info(
+            "Loaded %d calib entr(y/ies) from %s%s",
+            len(self.entries),
+            self.path,
+            "" if self.reuse_saved else " (earlier sessions: not reused)",
+        )
         return True
 
     def save(self) -> None:
@@ -257,10 +281,12 @@ class CalibCache:
     def upsert(self, entry: CalibEntry) -> None:
         if self.fingerprint is not None:
             entry.fingerprint = self.fingerprint
+        # Replace this model's entry for the window, saved or not, so the file
+        # keeps one entry per window instead of one per session.
         self.entries = [
             e
             for e in self.entries
-            if not self._visible(e)
+            if not self._same_model(e)
             or not e.matches(
                 method=entry.method,
                 resolution=entry.resolution,
@@ -268,10 +294,12 @@ class CalibCache:
                 pixels=entry.pixels,
             )
         ]
+        self._saved &= {id(e) for e in self.entries}
         self.entries.append(entry)
 
     def clear(self) -> None:
         self.entries = []
+        self._saved = set()
         if self.path.exists():
             self.path.unlink()
             logger.info("Cleared calibration cache %s", self.path)
@@ -286,10 +314,13 @@ class Calibrator:
         *,
         cache_path: Path | None = None,
         model: FilmModel = MODEL_8200I,
+        reuse_saved: bool = False,
     ) -> None:
         self.asic = asic
         self.model = model
-        self.cache = CalibCache(cache_path, fingerprint=calib_fingerprint(model))
+        self.cache = CalibCache(
+            cache_path, fingerprint=calib_fingerprint(model), reuse_saved=reuse_saved
+        )
         self.cache.load()
         self.pipeline = ImagePipeline(model)
         self._active: CalibEntry | None = None
