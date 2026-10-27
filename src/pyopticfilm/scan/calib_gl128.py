@@ -132,9 +132,18 @@ AFE_PRE_OFFSET_BLACK = 48
 #: Optical-black level SF settles on before the dark strip.
 AFE_BLACK_TARGET_COLOR = 0x500
 AFE_BLACK_TARGET_IR = 0
-#: Wide-strip white targets for the AD9826 gain law (R, G, B).
-AFE_WHITE_TARGETS_COLOR: tuple[float, float, float] = (47000.0, 53575.0, 53575.0)
-AFE_WHITE_TARGETS_IR: tuple[float, float, float] = (51800.0, 51800.0, 51800.0)
+#: Wide-strip white targets for the AD9826 gain law (R, G, B), fitted to SilverFast's
+#: own searches. SF probes optical black on the first line after the CCD sat idle,
+#: which reads high (#124), so its pre-offsets leave black below 0 and its wide
+#: means sit below what a settled probe gives.
+AFE_SF_WHITE_TARGETS_COLOR: tuple[float, float, float] = (47000.0, 53575.0, 53575.0)
+AFE_SF_WHITE_TARGETS_IR: tuple[float, float, float] = (51800.0, 51800.0, 51800.0)
+#: pyopticfilm's targets, for wide means taken after a throwaway strip: SF's,
+#: scaled by the settled / idle wide-mean ratio measured on the 8200i SE
+#: (2026-10-27, colour 26821/24953, 36750/35464, 32191/30563; IR 48199/47727,
+#: 41725/41058, 44274/43670). They land on SF's warm gains every time.
+AFE_WHITE_TARGETS_COLOR: tuple[float, float, float] = (50518.0, 55518.0, 56428.0)
+AFE_WHITE_TARGETS_IR: tuple[float, float, float] = (52313.0, 52639.0, 52515.0)
 #: Below this many counts per offset step the two-point probe is unusable.
 AFE_MIN_COUNTS_PER_OFFSET = 4.0
 #: SF's own codes, used per channel only when a probe is unusable: 8200i SE
