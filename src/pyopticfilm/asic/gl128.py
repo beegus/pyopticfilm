@@ -17,7 +17,7 @@ Differences from :class:`~pyopticfilm.asic.gl845.Gl845` that matter here:
   transparency operation and ``AVEENB`` (``0x40``) is never set;
 * positioning is two capture-constant feeds from home, then the image pass
   runs with ``FEEDL=1`` and ``AGOHOME`` so the carriage parks afterwards —
-  see ``captures/8200i-se/MOTOR.md``.
+  see ``docs/gl128-model-comparison.md`` section 4.
 """
 
 from __future__ import annotations
@@ -1500,7 +1500,7 @@ class Gl128:
         ignore_probe: bool = False,
         scan_regs: Mapping[int, int] | None = None,
     ) -> None:
-        """Replay the captured fast-feed recipe (see MOTOR.md).
+        """Replay the captured fast-feed recipe (``docs/gl128-model-comparison.md`` section 4).
 
         Does **not** write ``0x0d`` before ``0x0f`` — feeds in the capture start
         with ``0x0f = 0x01`` alone. Completion is either the vendor probe
@@ -1525,7 +1525,7 @@ class Gl128:
             return
         max_steps = int(self.model.max_feed_steps)
         if steps > max_steps:
-            raise AsicError(f"Refusing FEEDL={steps}: larger than any captured feed ({max_steps}). See captures/8200i-se/MOTOR.md.")
+            raise AsicError(f"Refusing FEEDL={steps}: larger than any captured feed ({max_steps}). See docs/gl128-model-comparison.md, section 4.")
 
         r = self.registers
         self.wait_motor_idle(f"before arming a {steps}-step feed")
@@ -1794,7 +1794,7 @@ class Gl128:
         raise AsicError(
             "GL128 has no capture-proven standalone home seek. Park with "
             "SilverFast or power-cycle so the carriage is at home, then continue. "
-            "See captures/8200i-se/MOTOR.md."
+            "See docs/gl128-model-comparison.md, section 4."
         )
 
     def park(self, *, timeout_s: float = 30.0) -> None:

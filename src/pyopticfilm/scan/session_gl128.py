@@ -167,8 +167,6 @@ class Gl128ScanSession(ScanSession):
     ) -> None:
         super().__init__(asic, model, calibrator)
         self.se_regs = Gl128Registers()
-        #: Set when the image pass armed ``AGOHOME`` — wait for park in ``_end_scan``.
-        self._await_agohome_park = False
         #: True after :meth:`bulk_read_begin` until :meth:`_end_scan` aborts/finishes.
         self._bulk_stream_active = False
         #: Image ``REG_EXPOSURE`` for the current pass (``None`` → short / 14000).
@@ -353,8 +351,6 @@ class Gl128ScanSession(ScanSession):
         cache.pop(r.REG_CLRCNT, None)
         cache.pop(r.REG_START, None)
 
-        self._await_agohome_park = not shading and bool(motor & r.AGOHOME)
-
         ch_exp_fn = getattr(model, "channel_exposure_for", None)
         if callable(ch_exp_fn):
             try:
@@ -399,7 +395,7 @@ class Gl128ScanSession(ScanSession):
                     f"{scan_steps} ({start_mm:.1f} mm), past the "
                     f"{model.max_travel_end_steps * 25.4 / model.feed_steps_per_inch:.1f} mm "
                     f"travel limit. Max LINCNT here is {max_lc} "
-                    "(see captures/8200i-se/MOTOR.md)."
+                    "(see docs/gl128-model-comparison.md, section 4)."
                 )
             # Feeds run under the image registers, like SilverFast's. SF does
             # not rewrite 0x2B before them, so they keep its white shading
@@ -1063,4 +1059,3 @@ class Gl128ScanSession(ScanSession):
                     logger.info("GL128 bulk abort after end_scan drained=%d", drained)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GL128 bulk abort after end_scan: %s", exc)
-            self._await_agohome_park = False

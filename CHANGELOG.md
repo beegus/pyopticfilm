@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **GL128 error messages pointed to a file that does not exist.** The travel-limit, feed-size and home errors said "see `captures/8200i-se/MOTOR.md`", which is in neither this repo nor the published capture dataset. They now point to `docs/gl128-model-comparison.md`, section 4 (motor). Code comments citing the also-missing `CALIB.md`, `PROTOCOL.md` and `SESSION_LOG.md` now point to that doc and the dataset's `SESSIONS.md`. The unused `Gl128ScanSession._await_agohome_park` flag is removed.
+
 - **GL128 AFE gains changed with sensor temperature and idle time** (8200i SE, 8100 V2, 8300i SE; [#124](https://github.com/jboneng/pyopticfilm/issues/124)). The first AFE search after power-up gave pre-offsets around `-25` and gains 2–3 codes lower than later sessions (`-105`, `35/25/32` on an 8200i SE).
   - **Cause.** The AFE search first reads the sensor's shielded optical-black pixels at gain 0. The first line after the CCD has sat unclocked carries the charge it gathered meanwhile, so it reads high. On a warm 8200i SE the error grows with idle time: +60 counts after 0.2 s, +270 after 1 s, +590 after 10 s. It is smaller on a cold sensor, so the result depended on both. SilverFast probes the same way; its captures were taken warm and show the "after idle" reading.
   - **Fix.** The search now clocks one throwaway strip before it probes, so the probe reads true black every time. The white targets for the gain step are scaled so that this settled measurement lands on SilverFast's warm gains. The scale comes from wide-strip means measured both ways on the 8200i SE. SilverFast's own targets are kept as `AFE_SF_WHITE_TARGETS_*`.
