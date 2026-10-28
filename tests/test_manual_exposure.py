@@ -256,3 +256,18 @@ def test_scanner_scan_single_pass_exposure_not_implemented_for_non_gl128():
             scanner.scan(resolution=900, area=_TINY, apply_calib=False, single_pass_exposure=5000)
     finally:
         scanner.close()
+
+
+def test_me_adaptive_long_meters_film_not_holder_border():
+    """A near-black holder border (~5 % of the default frame) must not set the long exposure."""
+    import numpy as np
+
+    session, _usb = _mock_gl128_session_armed()
+    frame = np.zeros((200, 200, 3), dtype=np.uint16)
+    frame[:, :] = (20000, 8000, 2500)  # film: blue p05 2500 -> 14000 * 10000 / 2500 = 56000
+    frame[:5], frame[-5:], frame[:, :5], frame[:, -5:] = 100, 100, 100, 100  # holder
+    session.pipeline.assemble = lambda *_a, **_k: frame.copy()  # type: ignore[method-assign]
+    session.run(resolution=1800, area=_TINY, apply_calib=False, multi_exposure=True)
+    debug = session.last_me_debug
+    assert debug.exposure_reason == "adaptive"
+    assert debug.exposure_long == 56000
