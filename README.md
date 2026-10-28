@@ -19,6 +19,7 @@ Support is one of:
 | OpticFilm 8200i SE | `07b3:1825` | GL128 | **Hardware tested** |
 | OpticFilm 8100 (V2) | `07b3:1824` | GL128 | **Hardware tested** (no IR) |
 | OpticFilm 8300i SE | `07b3:181f` | GL128 | **Hardware tested** (IR capable) |
+| OpticFilm 135i | `07b3:1436` | GL128 | Experimental (film loader, RGB+IR in one pass; load / eject / frame scans in-tree, not yet run on hardware, [notes](docs/gl128-model-comparison.md#11-opticfilm-135i-07b31436--capture-synthesis)) |
 | OpticFilm 8200i | `07b3:130d` | GL845 | Protocol validated (setup traces; scan locked) |
 | OpticFilm 8100 | `07b3:130c` | GL845 | Experimental |
 | OpticFilm 7600i v1 | `07b3:0c3b` | GL843 | **Hardware tested** ([notes](docs/opticfilm-7600i-v1.md)) |
