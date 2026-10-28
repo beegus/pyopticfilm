@@ -35,6 +35,7 @@ from pyopticfilm.logging import get_logger
 from pyopticfilm.scan.calibrate import Calibrator
 from pyopticfilm.scan.exposure_override import validate_manual_exposure, validate_n_passes
 from pyopticfilm.scan.geometry import ScanGeometry
+from pyopticfilm.scan.me_exposure import validate_me_long_mode
 from pyopticfilm.scan.session import DATA_TIMEOUT_S, ScanSession
 from pyopticfilm.usb.device import BULK_MAX_SIZE
 
@@ -195,12 +196,14 @@ class Gl128ScanSession(ScanSession):
         single_pass_exposure: int | None = None,
         me_short_exposure: int | None = None,
         me_long_exposure: int | None = None,
+        me_long_mode: str = "adaptive",
         n_passes: int = 1,
         **kwargs,
     ):  # type: ignore[no-untyped-def]
         """Refuse unless the ASIC explicitly arms motor moves."""
         if not getattr(self.asic, "_motor_moves_enabled", False):
             raise AsicError(_MOTOR_GATED_HINT)
+        validate_me_long_mode(me_long_mode)
         # Fail fast on bad manual-exposure input before any register write.
         validate_manual_exposure(single_pass_exposure, label="single_pass_exposure")
         validate_manual_exposure(me_short_exposure, label="me_short_exposure")
@@ -226,6 +229,7 @@ class Gl128ScanSession(ScanSession):
                 single_pass_exposure=single_pass_exposure,
                 me_short_exposure=me_short_exposure,
                 me_long_exposure=me_long_exposure,
+                me_long_mode=me_long_mode,
                 n_passes=n_passes,
                 **kwargs,
             )
@@ -462,6 +466,7 @@ class Gl128ScanSession(ScanSession):
         single_pass_exposure: int | None = None,
         me_short_exposure: int | None = None,
         me_long_exposure: int | None = None,
+        me_long_mode: str = "adaptive",
         n_passes: int = 1,
     ):
         from pyopticfilm.image import ScanImage
@@ -530,6 +535,7 @@ class Gl128ScanSession(ScanSession):
 
         ir_plane = None
         exposure_decision = None
+        fixed_reason: str | None = None
         # Content-aware ENDPIXEL drop, discovered on the very first capture of
         # the whole scan and reused by every later capture — including
         # Multi-Pass repeats of the same slot — so merge/align see matching
@@ -706,6 +712,17 @@ class Gl128ScanSession(ScanSession):
                     "ME long exposure: manual-override selected=%d",
                     exp_long,
                 )
+            elif me_long_mode == "fixed":
+                # SilverFast-style: the model's fixed long exposure on every
+                # frame, no metering, still inside the driver's safety clamp.
+                requested = int(getattr(model, "me_fixed_long_exposure", exp_long))
+                exp_long = clamp_me_long(model, geometry.resolution, requested)
+                fixed_reason = "fixed" if exp_long == requested else "fixed (clamped)"
+                logger.info(
+                    "ME long exposure: fixed requested=%d selected=%d",
+                    requested,
+                    exp_long,
+                )
             else:
                 adaptive_max = clamp_me_long(
                     model,
@@ -836,7 +853,8 @@ class Gl128ScanSession(ScanSession):
                 exposure_reason=(
                     "manual-override"
                     if long_manual
-                    else (None if exposure_decision is None else exposure_decision.reason)
+                    else fixed_reason
+                    or (None if exposure_decision is None else exposure_decision.reason)
                 ),
             )
 

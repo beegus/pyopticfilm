@@ -292,6 +292,7 @@ GL128_DIVERGENT_FIELDS: frozenset[str] = frozenset(
         "ladder_lincnt_by_dpi",
         "exposure_lperiod",
         "exposure_short",
+        "me_fixed_long_exposure",
         "pixel_clock_by_dpi",
         "pixel_clock_long_by_dpi",
         "dummy_by_dpi",
