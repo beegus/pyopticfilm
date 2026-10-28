@@ -271,3 +271,19 @@ def test_me_adaptive_long_meters_film_not_holder_border():
     debug = session.last_me_debug
     assert debug.exposure_reason == "adaptive"
     assert debug.exposure_long == 56000
+
+
+def test_single_pass_exposure_applies_to_colour_plus_ir():
+    """``infrared=True`` routes through the multi-pass path; the override must not be dropped."""
+    session, _usb = _mock_gl128_session_armed()
+    passes: list[tuple[str, int | None, bool]] = []
+    configure = session._configure
+
+    def spy(geometry):
+        if not geometry.disable_buffer_full_move:
+            passes.append((session.asic._scan_method, session._pass_exposure, session._pass_manual))
+        return configure(geometry)
+
+    session._configure = spy  # type: ignore[method-assign]
+    session.run(resolution=150, area=_TINY, apply_calib=False, infrared=True, single_pass_exposure=20000)
+    assert passes == [("transparency", 20000, True), ("infrared", 20000, True)]

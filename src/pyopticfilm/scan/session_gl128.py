@@ -495,15 +495,14 @@ class Gl128ScanSession(ScanSession):
             )
 
         model = self.model
-        # me_short_exposure (ME's own override key) always wins. single_pass_exposure
-        # is a fallback consulted only when n_passes>1 and multi_exposure is off —
-        # ME calls (n_passes==1 or multi_exposure=True) never look at it here, so
-        # every pre-Multi-Pass call shape (ME, IR-combo, or plain) is byte-identical
-        # to before this parameter existed.
+        # me_short_exposure (ME's own override key) always wins. Without ME the
+        # short slot *is* the single pass, so single_pass_exposure sets it for
+        # Multi-Pass and for colour+IR alike (the IR pass follows the short, as
+        # with me_short_exposure). Calls without an override are unchanged.
         if me_short_exposure is not None:
             short_manual = True
             exp_short = int(me_short_exposure)
-        elif n_passes > 1 and not multi_exposure and single_pass_exposure is not None:
+        elif not multi_exposure and single_pass_exposure is not None:
             short_manual = True
             exp_short = int(single_pass_exposure)
         else:
