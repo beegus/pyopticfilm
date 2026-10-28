@@ -426,6 +426,9 @@ class Gl128ScanSession(ScanSession):
 
         self.asic.protocol.write_registers_batched(sorted(cache.items()))
         self.asic._reg_cache.update(cache)
+        if not shading:
+            # The next stationary strip block re-initialises the ASIC first (B8).
+            self.asic.image_pass_since_init = True
 
         if self._lamp_requested:
             self.asic.lamp_on()
