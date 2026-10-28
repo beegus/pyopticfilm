@@ -237,11 +237,23 @@ class CalibCache:
             logger.warning("Ignoring unreadable calib cache at %s: %s", self.path, exc)
             self.entries = []
             return False
-        if raw.get("ident") != CACHE_IDENT or int(raw.get("version", 0)) != CACHE_VERSION:
+        if not isinstance(raw, dict) or raw.get("ident") != CACHE_IDENT or raw.get("version") != CACHE_VERSION:
             logger.warning("Ignoring incompatible calib cache at %s", self.path)
             self.entries = []
             return False
-        self.entries = [CalibEntry.from_dict(e) for e in raw.get("entries", [])]
+        entries = raw.get("entries", [])
+        if not isinstance(entries, list):
+            logger.warning("Ignoring calib cache at %s: 'entries' is not a list", self.path)
+            self.entries = []
+            return False
+        # One damaged entry must not stop the scanner from opening: skip it (the
+        # next save drops it) and remeasure that window when it is scanned.
+        self.entries = []
+        for index, data in enumerate(entries):
+            try:
+                self.entries.append(CalibEntry.from_dict(data))
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                logger.warning("Skipping damaged calib cache entry %d in %s: %s", index, self.path, exc)
         self._saved = {id(e) for e in self.entries}
         logger.info(
             "Loaded %d calib entr(y/ies) from %s%s",
