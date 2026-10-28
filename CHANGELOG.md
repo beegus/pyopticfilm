@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Fixed multi-exposure** (GL128: 8200i SE, 8100 V2, 8300i SE). `scan(multi_exposure=True, me_long_mode="fixed")` scans the long pass at one exposure per model on every frame, as SilverFast does, instead of metering the short pass: 42000 (3× short) on the 8200i SE and 8100 V2, 60000 (4× short) on the 8300i SE, the value in that model's SilverFast ME captures. The value is the new model field `me_fixed_long_exposure` and still goes through the normal long clamp (14000–85000). Everything after the long pass is unchanged, and `last_me_debug.exposure_reason` reads `"fixed"`. The default stays `"adaptive"`; a manual `me_long_exposure` still wins. Scan Lab has a **Fixed ME long (SilverFast-style)** toggle, and its CLI takes `--me-long-mode fixed`.
+  - **Hardware.** Not yet run on hardware in this mode. 42000 is the long exposure the adaptive path already uses as its floor on the 8200i SE and 8100 V2; 60000 on the 8300i SE comes from its SilverFast captures and is inside the clamp the adaptive path already scans with.
+
 ### Fixed
 
 - **Multi-exposure and Multi-Pass turned clipped highlights black.** Where a channel was at or above 95 % of full scale in every pass, the merge had no confident input and wrote 0, the darkest value. One clipped channel gave a hard colour error (red clipped in both passes came out `0, G, B`).

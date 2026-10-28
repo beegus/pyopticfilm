@@ -38,7 +38,7 @@ Other OpticFilm models **enumerate and open**: you can read status, turn the lam
 
 - Color and infrared transparency scans at 150–7200 dpi (ASIC programs at ≥600 dpi; lower PPI shares the 600 dpi register set and is downsampled on the host; infrared is available only on supported hardware)
 - Infrared as a dust plane on `ScanImage.ir` (`mode="infrared"`, or `infrared=True` with colour; 8200i SE, 8300i SE, and 7600i v1 among the hardware-tested set)
-- Multi-exposure (ME) on GL128 hardware-tested models (8200i SE, 8100 V2, and 8300i SE): short + adaptive long colour passes with host SNR/IVW merge into `ScanImage.rgb` (`multi_exposure=True`); bracket planes via `Scanner.last_me_debug`. Not available at 7200 dpi
+- Multi-exposure (ME) on GL128 hardware-tested models (8200i SE, 8100 V2, and 8300i SE): short + adaptive long colour passes with host SNR/IVW merge into `ScanImage.rgb` (`multi_exposure=True`), or a SilverFast-style fixed long pass (`me_long_mode="fixed"`); bracket planes via `Scanner.last_me_debug`. Not available at 7200 dpi
 - Multi-Pass on GL128: repeat an already-validated exposure `n_passes` times (1–9) and stack the aligned repeats for an SNR gain — no new exposure/speed value is ever introduced, only repeats of the short pass (`n_passes>1`) or, combined with `multi_exposure=True`, of both the short and long ME passes (Adaptive Multi-Pass); per-slot stacking stats via `Scanner.last_multi_pass_debug`. Not available at 7200 dpi
 - Manual exposure overrides on GL128 (`single_pass_exposure` / `me_short_exposure` / `me_long_exposure`) for testing/debugging: bypass the adaptive/hardware-max clamps and write an exact `REG_EXPOSURE` value (24-bit register range)
 - Optional crop via normalized `area` (`x1, y1, x2, y2` in 0–1)
@@ -157,6 +157,24 @@ with Scanner.open() as scanner:
         print(debug.exposure_proposed, debug.exposure_reason)
 ```
 
+Fixed multi-exposure (GL128): `me_long_mode="fixed"` skips the metering and
+scans the long pass at the model's fixed exposure on every frame, the way
+SilverFast does: 42000 (3× short) on the 8200i SE and 8100 V2, 60000 (4× short)
+on the 8300i SE, from `model.me_fixed_long_exposure`. The value still goes
+through the normal 14k–85k long clamp. Alignment, merge, film-base makeup, IR
+and `n_passes` work exactly as in adaptive mode; `debug.exposure_reason` is
+`"fixed"`. A manual `me_long_exposure` takes precedence over either mode.
+Without `multi_exposure=True` the option has no effect.
+
+```python
+image = scanner.scan(
+    resolution=1800,
+    mode="color",
+    multi_exposure=True,
+    me_long_mode="fixed",  # default "adaptive"
+)
+```
+
 Manual exposure overrides (GL128; debugging/testing only): send an exact
 ``REG_EXPOSURE`` value that bypasses adaptive selection and the hardware-max
 clamp above — the value is written verbatim. Two limits still apply: the
@@ -196,15 +214,18 @@ if debug is not None:
     print(debug.short.stack_stats.mean_confidence, debug.short.align_shifts)
 ```
 
-**Common scan-mode combinations.** `multi_exposure` and `n_passes` are independent axes; a
-simplified consumer UI typically only needs these four combinations, named as follows:
+**Common scan-mode combinations.** `multi_exposure` and `n_passes` are independent axes,
+and `me_long_mode` only matters with `multi_exposure=True`. A simplified consumer UI
+typically only needs these combinations, named as follows:
 
-| Name                       | `multi_exposure` | `n_passes` |
-|-----------------------------|:---:|:---:|
-| Single-Pass                 | `False` | `1` |
-| Multi-Pass                  | `False` | `2`–`9` |
-| Adaptive Multi-Exposure      | `True`  | `1` |
-| Adaptive Multi-Pass          | `True`  | `2`–`9` |
+| Name                       | `multi_exposure` | `me_long_mode` | `n_passes` |
+|-----------------------------|:---:|:---:|:---:|
+| Single-Pass                 | `False` | — | `1` |
+| Multi-Pass                  | `False` | — | `2`–`9` |
+| Adaptive Multi-Exposure      | `True`  | `"adaptive"` | `1` |
+| Adaptive Multi-Pass          | `True`  | `"adaptive"` | `2`–`9` |
+| Fixed Multi-Exposure         | `True`  | `"fixed"` | `1` |
+| Fixed Multi-Pass             | `True`  | `"fixed"` | `2`–`9` |
 
 **Resolution limits.** Multi-exposure and Multi-Pass are not available at every
 resolution: on the GL128 models they are off at 7200 dpi. Before offering them

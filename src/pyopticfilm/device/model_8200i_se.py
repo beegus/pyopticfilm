@@ -114,6 +114,9 @@ class Model8200iSE(Gl128Common):
 
     exposure_lperiod: int = 14000
     exposure_short: int = 14000
+    #: ME long pass for ``me_long_mode="fixed"``: 3x the short, the long
+    #: exposure SilverFast's ME captures use on this model.
+    me_fixed_long_exposure: int = 42000
     #: 13_7200ppi_color: SilverFast uploads 28000 per channel with
     #: ``REG_EXPOSURE`` 14000. At 14000 a full-width line outruns USB and the
     #: motor stops and restarts every few seconds.

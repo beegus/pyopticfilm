@@ -125,6 +125,7 @@ class Gl128Model(FilmModel, Protocol):
     pixel_clock_long_by_dpi: Mapping[int, int]
     exposure_short: int
     exposure_long: int
+    me_fixed_long_exposure: int
     me_adaptive_min_exposure: int
     me_adaptive_max_exposure: int
     me_hardware_max_exposure: int
