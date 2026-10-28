@@ -287,3 +287,63 @@ def test_single_pass_exposure_applies_to_colour_plus_ir():
     session._configure = spy  # type: ignore[method-assign]
     session.run(resolution=150, area=_TINY, apply_calib=False, infrared=True, single_pass_exposure=20000)
     assert passes == [("transparency", 20000, True), ("infrared", 20000, True)]
+
+
+# --- input types: NumPy integers in, bool out -------------------------------
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_validate_manual_exposure_rejects_bool(value):
+    """``True`` used to pass as exposure 1."""
+    with pytest.raises(TypeError, match="must be an int or None, got bool"):
+        validate_manual_exposure(value, label="x")
+
+
+@pytest.mark.parametrize("value", [1.0, 20000.0, "20000"])
+def test_validate_manual_exposure_still_rejects_non_integers(value):
+    with pytest.raises(TypeError):
+        validate_manual_exposure(value, label="x")
+
+
+def test_validate_manual_exposure_accepts_numpy_integers():
+    import numpy as np
+
+    for dtype in (np.int32, np.int64, np.uint32):
+        result = validate_manual_exposure(dtype(20000), label="x")
+        assert result == 20000 and type(result) is int
+    with pytest.raises(ValueError, match="exceeds the 24-bit"):
+        validate_manual_exposure(np.int64(MAX_EXPOSURE_REGISTER + 1), label="x")
+
+
+def test_validate_n_passes_accepts_numpy_integers_and_rejects_bool():
+    import numpy as np
+
+    from pyopticfilm.scan.exposure_override import validate_n_passes
+
+    result = validate_n_passes(np.int64(3))
+    assert result == 3 and type(result) is int
+    with pytest.raises(TypeError):
+        validate_n_passes(True)
+
+
+def test_scanner_scan_numpy_exposure_reaches_register():
+    import numpy as np
+
+    usb = MockScannerTransport()
+    scanner = Scanner.open_fake(MODEL_8200I_SE, usb)
+    try:
+        scanner.scan(resolution=150, area=_TINY, apply_calib=False, single_pass_exposure=np.int64(20000))
+    finally:
+        scanner.close()
+    assert _reg_exposure(usb) == 20000
+
+
+def test_scanner_scan_rejects_bool_exposure_before_usb():
+    usb = MockScannerTransport()
+    scanner = Scanner.open_fake(MODEL_8200I_SE, usb)
+    try:
+        with pytest.raises(TypeError, match="single_pass_exposure must be an int or None, got bool"):
+            scanner.scan(resolution=150, area=_TINY, apply_calib=False, single_pass_exposure=True)
+        assert usb.transactions == []
+    finally:
+        scanner.close()
