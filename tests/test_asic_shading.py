@@ -191,7 +191,12 @@ def test_cache_roundtrip_blob(tmp_path: Path):
     cal.cache.upsert(_blob_entry(geometry, blob=b"XYZ"))
     cal.cache.save()
 
-    cal2 = Calibrator(_asic(), cache_path=path, model=MODEL_8200I_SE)
+    # A new session measures again by default; the saved entry is only kept in the file.
+    fresh = Calibrator(_asic(), cache_path=path, model=MODEL_8200I_SE)
+    assert fresh.find_for_scan(method="transparency", geometry=geometry) is None
+    assert len(fresh.cache.entries) == 1
+
+    cal2 = Calibrator(_asic(), cache_path=path, model=MODEL_8200I_SE, reuse_saved=True)
     hit = cal2.find_for_scan(method="transparency", geometry=geometry)
     assert hit is not None
     assert hit.has_asic_blob

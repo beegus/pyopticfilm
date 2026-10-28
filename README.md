@@ -323,7 +323,7 @@ for comparison; widened windows and derived 7200 dpi IR still recompute final sh
 
 The following cache guidance applies to GL128 models.
 
-Shading runs automatically before scan when a matching cache entry exists. Force a new calibration with `scanner.calibrate(force=True)` or `scanner.scan(..., apply_calib=False)` to skip applying cached data.
+Each scan calibrates automatically: the first scan of a given resolution and crop in a session measures (about 6 s on the 8200i SE), and later scans of the same window in that session reuse it. Calibrations saved by earlier sessions are not reused, because lamp and sensor drift between sessions and every GL128 unit reports the same USB serial, so a swapped scanner cannot be told apart. Force a new calibration within a session with `scanner.calibrate(force=True)`; `scanner.scan(..., apply_calib=False)` scans without shading.
 
 The cache key includes resolution, crop geometry, and scan method (transparency vs infrared). GL128 colour shading uses ASIC-internal measurements at home; IR uses a white-only path suitable for stationary shading.
 
