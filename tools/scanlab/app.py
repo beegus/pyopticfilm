@@ -217,7 +217,7 @@ class ScanLabWindow(QMainWindow):
             "REG_EXPOSURE for the ME long pass. Empty = normal adaptive "
             "selection. A value here overrides adaptive selection entirely, "
             "skips the hardware-max clamp, and is written verbatim — still "
-            "limited to the AHB per-channel exposure table's 16-bit width "
+            "limited to the AHB scan motor table's 16-bit width "
             "(1-65535) at oversample == 1 resolutions (e.g. 7200 dpi)."
         )
         self.me_long_exposure.setEnabled(False)

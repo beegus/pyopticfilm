@@ -607,7 +607,7 @@ class Gl128:
         if last_exc is not None:
             raise last_exc
 
-        self.protocol.bulk_read_begin(size, index=r.BULK_INDEX_RAM, addr=r.AHB_CHANNEL_R)
+        self.protocol.bulk_read_begin(size, index=r.BULK_INDEX_RAM, addr=r.AHB_RAM_BASE)
         buf = bytearray()
         while len(buf) < size:
             chunk = self.protocol.bulk_read_chunk(min(size - len(buf), size))
@@ -921,7 +921,7 @@ class Gl128:
                 self._write(r.REG_0x02, 0x00)
             raise
 
-        self.protocol.bulk_read_begin(size, index=r.BULK_INDEX_RAM, addr=r.AHB_CHANNEL_R)
+        self.protocol.bulk_read_begin(size, index=r.BULK_INDEX_RAM, addr=r.AHB_RAM_BASE)
         buf = bytearray()
         while len(buf) < size:
             chunk = self.protocol.bulk_read_chunk(min(65536, size - len(buf)))
@@ -1232,7 +1232,7 @@ class Gl128:
         slope: bool = True,
         channel_exposure: int | None = None,
     ) -> None:
-        """Upload motor slope and/or per-channel exposure tables to scanner RAM.
+        """Upload motor slope and/or scan motor tables to scanner RAM.
 
         ``shading=True`` loads the slow ramp (session 03 feeds); otherwise the
         fast ramp used for feeds and image. Pass ``slope=False`` for the
@@ -1263,7 +1263,7 @@ class Gl128:
             else exposure_table(int(channel_exposure))
         )
         exposure = _u16_table_bytes(words)
-        for addr in (r.AHB_CHANNEL_R, r.AHB_CHANNEL_G, r.AHB_CHANNEL_B):
+        for addr in (r.AHB_SCAN_MOTOR_0, r.AHB_SCAN_MOTOR_1, r.AHB_SCAN_MOTOR_2):
             self.protocol.write_ahb(addr, exposure)
         logger.debug(
             "GL128 uploaded %s for %d dpi",

@@ -57,7 +57,7 @@ _IMAGE_REG_1D_LOW_BY_DPI: dict[int, int] = {7200: 0x01}
 _REG_1D = 0x1D
 _REG_1D_LOW_MASK = 0x1F
 
-#: AHB per-channel exposure words are 16-bit. At oversample == 1 (native
+#: AHB scan motor table words are 16-bit. At oversample == 1 (native
 #: optical resolution, 7200 dpi) ``channel_exposure_for`` copies
 #: ``REG_EXPOSURE`` into that table unmasked. A value at or above 65536 wraps
 #: there while the 24-bit exposure register does not, desyncing line timing
@@ -73,7 +73,7 @@ def clamp_me_long(model: Gl128Model, resolution: int, exp_long: int) -> int:
     ``me_long_clamp_min`` / ``me_long_clamp_max`` are shared by both GL128
     models (14000–85000). The ceiling is also
     ``min(model max, 64000 * oversample(resolution))`` so a native 7200 dpi
-    pass cannot overflow the 16-bit per-channel exposure table.
+    pass cannot overflow the 16-bit scan motor table.
     """
     lo = int(model.me_long_clamp_min)
     hi = int(model.me_long_clamp_max)
@@ -83,7 +83,7 @@ def clamp_me_long(model: Gl128Model, resolution: int, exp_long: int) -> int:
 
 
 def native_line_floor(model: Gl128Model) -> int:
-    """Lowest per-channel table word for a driver-derived image pass at oversample 1.
+    """Lowest scan motor table word for a driver-derived image pass at oversample 1.
 
     Below ``exposure_short * native_image_exposure_factor`` (28000 on the
     8200i SE / 8100 V2, 15000 on the 8300i SE) a full-width 7200 dpi line comes
