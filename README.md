@@ -161,7 +161,7 @@ Manual exposure overrides (GL128; debugging/testing only): send an exact
 ``REG_EXPOSURE`` value that bypasses adaptive selection and the hardware-max
 clamp above — the value is written verbatim. Two limits still apply: the
 24-bit register range (1–``0xFFFFFF``), and — at oversample == 1 resolutions
-(e.g. 7200 dpi) — the AHB per-channel exposure table's 16-bit width
+(e.g. 7200 dpi) — the AHB scan motor table's 16-bit width
 (1–65535); either is rejected with a clear error rather than clamped or
 silently corrupted. All three default to ``None`` (unchanged behavior):
 

@@ -120,7 +120,7 @@ Each field is grayed out when it does not apply to the current pass selection
 `REG_EXPOSURE` **verbatim** — it skips adaptive selection and the hardware-max
 clamp that apply to normal (automatic) exposure. Two limits still apply
 regardless: the 24-bit register range (1–16777215 / `0xFFFFFF`), and — at
-oversample == 1 resolutions (e.g. 7200 dpi) — the AHB per-channel exposure
+oversample == 1 resolutions (e.g. 7200 dpi) — the AHB scan motor
 table's 16-bit width (1–65535); an out-of-range value for either is rejected
 with a clear error rather than clamped or silently corrupted.
 

@@ -194,7 +194,7 @@ def test_me_long_manual_skips_adaptive_clamp_and_reaches_register():
 
 
 def test_me_long_manual_above_16bit_table_raises():
-    """A manual override whose AHB per-channel table word (exposure / oversample)
+    """A manual override whose AHB scan motor table word (exposure / oversample)
     exceeds 16 bits fails loudly instead of silently uploading a wrapped table
     value inconsistent with REG_EXPOSURE."""
     session, _usb = _mock_gl128_session_armed()

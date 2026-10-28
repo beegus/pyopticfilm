@@ -828,9 +828,9 @@ def test_upload_tables_slope_false_skips_slope_ahb():
     addrs = [int(c.args[0]) for c in proto.write_ahb.call_args_list]
     assert r.AHB_SLOPE_SCAN not in addrs
     assert r.AHB_SLOPE_FAST not in addrs
-    assert r.AHB_CHANNEL_R in addrs
-    assert r.AHB_CHANNEL_G in addrs
-    assert r.AHB_CHANNEL_B in addrs
+    assert r.AHB_SCAN_MOTOR_0 in addrs
+    assert r.AHB_SCAN_MOTOR_1 in addrs
+    assert r.AHB_SCAN_MOTOR_2 in addrs
 
 
 def test_run_asic_shading_calls_exposure_only_after_unity(monkeypatch):
