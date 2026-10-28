@@ -7,7 +7,8 @@ Step 3: build/upload ASIC shading at ``0x10014000`` (unity then measured).
 Pure functions only — hardware I/O lives on :class:`Gl128`. The dichotomy
 helpers further down serve GL845.
 
-See ``captures/8200i-se/CALIB.md`` and ``decoded/afe_shading_fixture.json``.
+See ``docs/gl128-model-comparison.md`` section 8, and ``8200i-se/decoded/afe_shading_fixture.json``
+in the capture dataset (jboneng/pyopticfilm_captures).
 """
 
 from __future__ import annotations
