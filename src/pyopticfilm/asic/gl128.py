@@ -32,7 +32,7 @@ from pyopticfilm.asic.status import ScannerStatus
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.protocol import Gl128Model
 from pyopticfilm.device.tables_8200i_se import exposure_table
-from pyopticfilm.exceptions import AsicError, MotorTimeoutError, ScanError
+from pyopticfilm.exceptions import AsicError, MotorTimeoutError, ScanError, ScannerStuckError
 from pyopticfilm.logging import get_logger
 from pyopticfilm.scan.calib_gl128 import (
     AFE_BLACK_TARGET_COLOR,
@@ -275,6 +275,9 @@ class Gl128:
         #: Last successful :meth:`search_afe` result; image configure re-applies
         #: it so scan setup does not wipe calibrated FE gains back to boot zero.
         self.last_afe: AfeFrontend | None = None
+        #: An image pass ran since the last boot: the next stationary strip block
+        #: must re-initialise the ASIC first (see :meth:`reinit_before_stationary_strips`).
+        self.image_pass_since_init: bool = False
         #: ``LPERIOD`` written by the last shading strip setup (for its log line).
         self._strip_lperiod = 0
         #: USB line layout learned from AFE strip means (True=planar RRR…GGG…BBB…).
@@ -440,6 +443,7 @@ class Gl128:
         self._write(r.REG_CLRCNT, r.CLRCNT_ALL)
         deadline = time.monotonic() + _STATIONARY_IDLE_WAIT_S
         last01 = last02 = last_st = -1
+        status = None
         while time.monotonic() < deadline:
             last01 = int(self.protocol.read_register(r.REG_0x01)) & 0xFF
             last02 = int(self.protocol.read_register(r.REG_0x02)) & 0xFF
@@ -462,6 +466,23 @@ class Gl128:
             if last02 & motor_mask:
                 self._write(r.REG_0x02, 0x00)
             time.sleep(0.02)
+        # Motor power off and the carriage at home, yet MOTORENB stays set for
+        # the whole wait (a healthy settle takes ~20 ms). Seen on an 8200i SE
+        # after a colour pass: every later strip START hangs and only a
+        # power-cycle clears it. Retrying, feeding or waiting for a park cannot
+        # help, so stop here instead of driving the motor.
+        if (
+            status is not None
+            and (last02 & motor_mask) == 0
+            and status.is_at_home
+            and status.is_motor_enabled
+        ):
+            raise ScannerStuckError(
+                f"GL128 {where}: the scanner reports its motor running (status "
+                f"0x{last_st:02x}) with motor power off, and it did not clear in "
+                f"{_STATIONARY_IDLE_WAIT_S:.0f} s. Switch the scanner off and on, "
+                "then retry the scan."
+            )
         logger.warning(
             "GL128 %s: scan engine not idle (0x01=%#04x 0x02=%#04x status=0x%02x)",
             where,
@@ -619,6 +640,7 @@ class Gl128:
         """
         if not self._initialized:
             self.init()
+        self.reinit_before_stationary_strips()
         if method is not None:
             self.set_scan_method(method)
         infrared = self._scan_method == "infrared"
@@ -962,6 +984,7 @@ class Gl128:
             self.init()
         if self._motor_moves_enabled:
             raise ScanError("ASIC shading requires motor disarmed — call disarm_bringup_motor before run_asic_shading")
+        self.reinit_before_stationary_strips()
         if method is not None:
             self.set_scan_method(method)
         infrared = self._scan_method == "infrared"
@@ -1172,6 +1195,32 @@ class Gl128:
                 )
         return measured
 
+    def reinit_before_stationary_strips(self) -> None:
+        """Re-initialise the ASIC before stationary strips that follow an image pass.
+
+        SilverFast rewrites the full register table (and the AFE defaults)
+        before every block of stationary strips that follows an image pass:
+        at the next scan, and inside a colour + IR scan before the IR
+        calibration. Without it, a stationary strip after a long-exposure pass
+        (ME long pass at 85000, or a manual 20000) could hang with ``MOTORENB``
+        stuck until a power-cycle (8200i SE, B8). Hardware, 2026-10-28: without
+        it, ME then a new resolution stuck 3 of 3 times; with it, 0 of 10
+        (5 of those, and 5 colour + IR scans at 20000).
+
+        Keeps what is still valid on the host (AFE codes, IR profile); clears
+        the ASIC shading flag, since the boot DRAM toggle may wipe that RAM.
+        Re-enters the scan clock last: boot leaves the boot clock, which runs
+        the 8300i SE motor too fast.
+        """
+        if not self.image_pass_since_init:
+            return
+        logger.info("GL128 re-initialising the ASIC before stationary strips (after an image pass)")
+        self.asic_boot()
+        self.upload_tables(resolution=max(self.model.resolutions_dpi))
+        self.asic_shading_ready = False
+        self.image_pass_since_init = False
+        self.enter_scan_clock()
+
     def upload_tables(
         self,
         *,
@@ -1280,6 +1329,7 @@ class Gl128:
         self.asic_boot()
         self.upload_tables(resolution=max(self.model.resolutions_dpi))
         self.last_afe = None
+        self.image_pass_since_init = False
         self.asic_shading_ready = False
         self.last_ir_host_white = None
         self.ir_host_flatten_ready = False

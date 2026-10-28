@@ -18,7 +18,7 @@ import numpy as np
 
 from pyopticfilm.device.model_8200i import MODEL_8200I
 from pyopticfilm.device.protocol import AsicDriver, FilmModel
-from pyopticfilm.exceptions import AsicError, CalibrationError, ScanError
+from pyopticfilm.exceptions import AsicError, CalibrationError, ScanError, ScannerStuckError
 from pyopticfilm.logging import get_logger
 from pyopticfilm.scan.geometry import ScanGeometry, compute_calib_geometry, compute_geometry
 from pyopticfilm.scan.pipeline import ImagePipeline
@@ -610,6 +610,10 @@ class Calibrator:
                     endpixel=geometry.pixel_endx,
                     dpiset=geometry.register_dpiset,
                 )
+        except ScannerStuckError:
+            # Not an IR-calibration problem: the scanner needs a power-cycle, and
+            # carrying on would start feeding with the motor stuck.
+            raise
         except (AsicError, CalibrationError, ScanError) as exc:
             reason = str(exc)
         ready = reason is None and bool(getattr(asic, "ir_host_flatten_ready", False))
