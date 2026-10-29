@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scan session for the GL128 film loader (OpticFilm 135i).
 
-Every pass runs in toggle mode: each scan line is a visible line then an IR
+Every pass runs in toggle mode: each scan line is an IR line then a visible
 line, so colour and infrared come from the same pass and are registered to
 the same scan line. ``infrared=False`` drops the IR half. What differs from
 :class:`~pyopticfilm.scan.session_gl128.Gl128ScanSession`:

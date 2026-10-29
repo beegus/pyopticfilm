@@ -137,11 +137,17 @@ def feedl_for_move(steps: int) -> int:
 # Loader
 # --------------------------------------------------------------------------
 
-#: Holder sensor: GPIO ``0x32`` bit 6, low while a holder is in the loader
-#: (``insert 35mm carrier``: ``0x32`` reads ``0x43`` before the insert and
-#: ``0x07`` after it, then the load feeds start 0.5 s later).
+#: Holder sensor: GPIO ``0x32`` bit 2, high while a holder is in the slot.
+#: The one bit that follows the holder in every reading: ``insert 35mm
+#: carrier`` (``0x43`` -> ``0x07``), QuickScan (``0x43`` -> ``0x05``), and on
+#: a 135i before init (``0xc2`` empty, ``0xc6`` holder in) and after it
+#: (``0x1b`` empty). Bit 6 is not an input: after the init table's ``0x1F``
+#: it reads 0 with the slot empty.
 HOLDER_SENSOR_REG = 0x32
-HOLDER_SENSOR_MASK = 0x40
+HOLDER_SENSOR_MASK = 0x04
+#: Second status register: ``MOTMFLG`` (bit 1) while the motor still turns.
+STATUS2_REG = 0x100
+STATUS2_MOTMFLG = 0x02
 #: Interrupt endpoint ``0x83`` byte sent when the eject button is pressed
 #: (``holder eject``: the only completed interrupt, 2.6 s before the eject feed).
 EJECT_EVENT = 0x48
@@ -171,12 +177,18 @@ PANORAMA_HEIGHT_STEPS = 66600
 #: steps from home, past the INI ``PageSize`` height of 72000 (10 in). A feed
 #: plus the image pass must end inside it.
 LOADER_TRAVEL_STEPS = PANORAMA_FEED_STEPS + 5609 * 12
-#: ``LoaderHomeSensorReg = 0x32,0x02,0``: an output, cleared before the load
-#: feeds (``insert 35mm carrier``: ``0x32`` ``07`` -> ``05``).
+#: ``LoaderHomeSensorReg = 0x32,0x02,0``: an output that selects what
+#: ``HOMESNR`` (``0x101`` bit 3) reads. Cleared, the loader stop is armed and
+#: ``HOMESNR`` reads a narrow band around the loaded position; set, it reads
+#: "holder in the slot". The load clears it (``insert 35mm carrier``: ``0x32``
+#: ``07`` -> ``05``); the init table sets it (``0x1F``).
 LOADER_HOME_SENSOR_BIT = 0x02
-#: ``0x09`` while the holder is ejected (``holder eject``: ``09=08`` before the
-#: feed, ``09=00`` after it).
+#: ``0x09`` bit set while the holder is ejected (``holder eject``: ``09=08``
+#: before the feed, ``09=00`` after it).
 EJECT_REG_09 = 0x08
+#: Holder LED, written before the eject (QuickScan: ``36=fc``, ``33=8e``; the
+#: init table's values).
+EJECT_LED_REGS: tuple[tuple[int, int], ...] = ((0x36, 0xFC), (0x33, 0x8E))
 
 
 def ramp_steps_for_move(steps: int) -> int:
@@ -355,7 +367,7 @@ INIT_REGS_135I: dict[int, int] = {
 
 #: Memory layout block written before every acquire; identical in all three
 #: measured scans. ``0xD0``/``0xD1`` select shading banks 10 (``0x10014000``,
-#: visible) and 26 (``0x10034000``, IR) in toggle mode.
+#: IR) and 26 (``0x10034000``, visible) in toggle mode.
 MEMORY_LAYOUT_REGS_135I: dict[int, int] = {
     0xD0: 0x0A, 0xD1: 0x1A,
     0xE0: 0x00, 0xE1: 0xA8, 0xE2: 0x0B, 0xE3: 0x35, 0xE4: 0x0B, 0xE5: 0x36,

@@ -394,11 +394,13 @@ class MockScannerTransport(FakeUsbTransport):
 class MockFilmLoaderTransport(MockScannerTransport):
     """Fake OpticFilm 135i: holder sensor, loader moves and lit toggle-mode lines.
 
-    ``0x32`` bit 6 reads low while :attr:`holder_present`. A START with the
-    motor off is a stationary strip (stays home, data ready); a reverse move
-    (``0x02`` bit 2) ends at the loader home. Bulk data is flat per line type:
+    ``0x32`` bit 2 reads high while :attr:`holder_present`. ``HOMESNR`` reads
+    :attr:`at_home` (the loaded position) while ``0x32`` bit 1 is clear and
+    :attr:`holder_present` while it is set. A START with the motor off is a
+    stationary strip (stays home, data ready); a reverse move (``0x02``
+    bit 2) ends at the loader home. Bulk data is flat per line type:
     :attr:`dark_level` with the lamp off, otherwise :attr:`visible_level` on
-    visible lines and :attr:`ir_level` on IR lines (odd lines while the
+    visible lines and :attr:`ir_level` on IR lines (even lines while the
     toggle bit ``0x19`` bit 3 is set). AFE strips (``DPISET = 1200``, two lines) carry
     :attr:`black_level` on their first 31 columns.
     """
@@ -411,10 +413,17 @@ class MockFilmLoaderTransport(MockScannerTransport):
     _reverse: bool = False
     _stream: int = 0
 
+    def _status_byte(self) -> int:
+        v = super()._status_byte() & ~_R.STATUS_HOMESNR
+        armed = not self.registers.get(0x32, 0) & 0x02
+        if (self.at_home if armed else self.holder_present):
+            v |= _R.STATUS_HOMESNR
+        return v & 0xFF
+
     def _before_register_read(self, addr: int) -> None:
         if addr == 0x32:
-            value = self.registers.get(0x32, 0) & ~0x40 & 0xFF
-            self.registers[0x32] = value | (0x00 if self.holder_present else 0x40)
+            value = self.registers.get(0x32, 0) & ~0x04 & 0xFF
+            self.registers[0x32] = value | (0x04 if self.holder_present else 0x00)
         super()._before_register_read(addr)
 
     def _after_register_write(self, addr: int, value: int) -> None:
@@ -459,7 +468,7 @@ class MockFilmLoaderTransport(MockScannerTransport):
         else:
             values = np.asarray(self.visible_level, dtype=np.uint16)[channel]
             if self.registers.get(0x19, 0) & 0x08:
-                values = np.where(line % 2 == 1, np.uint16(self.ir_level), values)
+                values = np.where(line % 2 == 0, np.uint16(self.ir_level), values)
             if dpiset == 1200 and self._u(0x25, 3) == 2:
                 values = np.where(column < 31, np.uint16(self.black_level), values)
         out = values.astype("<u2").tobytes()

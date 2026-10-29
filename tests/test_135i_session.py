@@ -19,7 +19,8 @@ from pyopticfilm.device.model_135i import MODEL_135I
 from pyopticfilm.device.model_8200i_se import MODEL_8200I_SE
 from pyopticfilm.device.select import create_asic
 from pyopticfilm.device.tables_135i import SLOPE_TABLE_FEED, SLOPE_TABLE_LOADER, scan_motor_table
-from pyopticfilm.exceptions import AsicError, ScanError
+from pyopticfilm.exceptions import AsicError, MotorTimeoutError, ScanError
+from pyopticfilm.scan.calib_gl128 import unpack_shading_table
 from pyopticfilm.scan.calib_gl128_loader import (
     AHB_SHADING_IR,
     AHB_SHADING_VISIBLE,
@@ -148,14 +149,130 @@ def test_eject_matches_holder_eject_capture(scanner, rec):
     scanner.eject_holder()
     (move,) = rec.starts
     assert (move[0x09], move[0x02], _u(move, 0x3D, 3), move[0xAF]) == (0x08, 0x18, 3090, 0xFF)
+    # Vendor order: holder LED, then the stop disarmed (0x32 bit 1 set), then 09 |= 08.
+    assert move[0x32] & 0x02 == 0x02
+    led = rec.writes.index((0x36, 0xFC))
+    assert rec.writes[led + 1] == (0x33, 0x8E)
+    assert led < rec.writes.index((0x09, 0x08))
     assert rec.writes[-1] == (0x09, 0x00)
     assert all(_words(blob) == SLOPE_TABLE_FEED for _, blob in rec.ahb)
+
+
+def test_eject_off_home_homes_first(scanner, rec):
+    scanner.asic.init()
+    rec.at_home = False
+    rec.starts.clear()
+    scanner.eject_holder()
+    assert [(_u(s, 0x3D, 3), s[0x02]) for s in rec.starts] == [(6690, 0x18), (71490, 0x1C), (3090, 0x18)]
+    forward, reverse, eject = rec.starts
+    assert forward[0x32] & 0x02 == 0 and reverse[0x32] & 0x02 == 0
+    assert eject[0x32] & 0x02 == 0x02
+
+
+def test_eject_with_empty_slot_does_not_move(scanner, rec):
+    scanner.asic.init()
+    rec.holder_present = False
+    rec.at_home = False
+    rec.starts.clear()
+    scanner.eject_holder()
+    assert rec.starts == []
 
 
 def test_eject_button_reads_interrupt_byte(scanner, rec):
     rec.interrupt_queue.append(b"\x48")
     assert scanner.asic.eject_requested() is True
     assert scanner.asic.eject_requested() is False
+
+
+# --- loader sensors ---------------------------------------------------------------
+
+
+def test_holder_sensor_is_0x32_bit2(scanner, rec):
+    scanner.asic.init()
+    rec.holder_present = False
+    # Measured on a 135i after the init table: 0x32 = 0x1b with the slot empty (bit 6 clear).
+    assert scanner.protocol.read_register(0x32) == 0x1B
+    assert scanner.holder_present() is False
+    rec.holder_present = True
+    assert scanner.holder_present() is True
+
+
+def test_at_home_reads_homesnr_with_the_stop_armed(scanner, rec):
+    asic = scanner.asic
+    asic.init()
+    assert scanner.protocol.read_register(0x32) & 0x02  # init leaves the stop disarmed
+    rec.at_home = False
+    # Disarmed, HOMESNR reads "holder in the slot"; the loaded position needs the stop armed.
+    assert asic.read_status_reliable().is_at_home is True
+    assert asic.is_at_home() is False
+    assert scanner.protocol.read_register(0x32) & 0x02  # restored
+    with pytest.raises(ScanError, match="not at the loader home"):
+        asic.require_holder_loaded("scan")
+
+
+# --- home -------------------------------------------------------------------------
+
+
+def test_home_feeds_in_before_the_reverse_seek(scanner, rec):
+    scanner.asic.init()
+    rec.at_home = False
+    rec.starts.clear()
+    scanner.home()
+    assert [(_u(s, 0x3D, 3), s[0x02], s[0x32] & 0x02) for s in rec.starts] == [(6690, 0x18, 0), (71490, 0x1C, 0)]
+    assert scanner.asic.is_at_home()
+
+
+def test_home_does_not_seek_while_the_sensor_stays_set(scanner, rec, monkeypatch):
+    asic = scanner.asic
+    asic.init()
+    rec.at_home = False
+    rec.starts.clear()
+
+    def feed_onto_sensor(*_a, **_k):
+        rec.at_home = True
+
+    monkeypatch.setattr(asic, "_loader_move", feed_onto_sensor)
+    with pytest.raises(AsicError, match="stayed set"):
+        asic.home()
+    assert rec.starts == []
+
+
+def test_home_without_holder_does_not_move(scanner, rec):
+    scanner.asic.init()
+    rec.holder_present = False
+    rec.at_home = False
+    rec.starts.clear()
+    scanner.home()
+    assert rec.starts == []
+
+
+def test_already_home_with_the_stop_armed(scanner, rec):
+    scanner.asic.init()
+    rec.starts.clear()
+    scanner.home()
+    assert rec.starts == []
+
+
+# --- motor stop -----------------------------------------------------------------
+
+
+def test_move_timeout_does_not_claim_the_motor_stopped(scanner, rec):
+    asic = scanner.asic
+    asic.init()
+    rec.writes.clear()
+    with pytest.raises(MotorTimeoutError, match="may still be running"):
+        asic._wait_move(timeout_s=0, until_home=False, steps=3600)
+    assert all(addr != 0x02 for addr, _ in rec.writes)
+    assert asic._park_ok is False
+
+
+def test_close_without_an_image_pass_does_not_park(scanner, rec):
+    scanner.asic.init()
+    rec.writes.clear()
+    rec.starts.clear()
+    scanner.close()
+    assert all(addr != 0x02 for addr, _ in rec.writes)
+    assert rec.starts == []
 
 
 # --- geometry -------------------------------------------------------------------
@@ -186,10 +303,11 @@ def test_crop_and_frame_feed():
 
 
 def test_split_toggle_lines():
+    # IR line first, visible second (VueScan's AFE probes).
     raw = bytes([1] * 6 + [2] * 6) * 3
     visible, ir = split_toggle_lines(raw, line_bytes=6, pairs=3)
-    assert visible.tobytes() == bytes([1] * 18)
-    assert ir.tobytes() == bytes([2] * 18)
+    assert ir.tobytes() == bytes([1] * 18)
+    assert visible.tobytes() == bytes([2] * 18)
 
 
 # --- scans ----------------------------------------------------------------------
@@ -239,11 +357,16 @@ def test_1200_preview_programs_match_capture(scanner, rec):
     assert image[0x32] & 0xA0 == 0xA0
     assert _u(image, 0x25, 3) == compute_geometry(1200, model=MODEL_135I).lincnt_register
 
-    # Shading: unity (0x4000) then measured, visible and IR banks, 21064 bytes each.
+    # Shading: unity (0x4000) then measured, IR then visible bank, 21064 bytes each.
     shading = [(a, blob) for a, blob in rec.ahb if a in (AHB_SHADING_VISIBLE, AHB_SHADING_IR)]
-    assert [a for a, _ in shading] == [AHB_SHADING_VISIBLE, AHB_SHADING_IR] * 2
+    assert [a for a, _ in shading] == [0x10014000, 0x10034000] * 2
+    assert (AHB_SHADING_IR, AHB_SHADING_VISIBLE) == (0x10014000, 0x10034000)
     assert all(len(blob) == 21064 for _, blob in shading)
     assert _words(shading[0][1])[1] == SHADING_GAIN_UNITY
+    # The IR bank is sized on the IR line (mock IR white 30000, visible ~41000).
+    ir_gain = unpack_shading_table(shading[2][1])[100]["gain"]
+    vis_gain = unpack_shading_table(shading[3][1])[100]["gain"]
+    assert len(set(ir_gain)) == 1 and min(ir_gain) > max(vis_gain)
     # Scan motor tables after the feed: the INI ramp clamped at 4666.
     motor = [blob for a, blob in rec.ahb if a in (R.AHB_SCAN_MOTOR_0, R.AHB_SCAN_MOTOR_1, R.AHB_SCAN_MOTOR_2)]
     assert len(motor) == 3 and all(_words(b) == scan_motor_table(4666) for b in motor)

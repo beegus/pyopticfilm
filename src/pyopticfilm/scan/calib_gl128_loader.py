@@ -5,14 +5,15 @@ The 135i calibrates at the loader home in toggle mode, like every VueScan pass
 in the 135i captures (``docs/gl128-model-comparison.md`` §11):
 
 * **AFE**: a 512-pixel probe strip and a full-width strip, two sensor lines
-  each (one visible, one IR), at ``DPISET = 1200``. The optical-black pixels
+  each (IR, then visible), at ``DPISET = 1200``. The optical-black pixels
   are the first 31 columns of the window (STRPIXEL 35).
 * **Dark**: 256 lines at the scan's DPISET and window, lamp off, toggle bit
   and IR LED off.
-* **White**: 256 lines (128 visible + 128 IR) with ``DVDSET`` on the unity
+* **White**: 256 lines (128 IR + 128 visible) with ``DVDSET`` on the unity
   tables, lamp and IR LED on, motor off.
-* **Shading**: one table per line type, visible at ``0x10014000`` and IR at
-  ``0x10034000`` (``0xD0 = 0x0A``, ``0xD1 = 0x1A``). Unity is ``0x4000`` on
+* **Shading**: one table per line type: the first line of each pair (IR) at
+  ``0x10014000`` and the second (visible) at ``0x10034000`` (``0xD0 = 0x0A``,
+  ``0xD1 = 0x1A``). Unity is ``0x4000`` on
   this model (``0x06 = 0xF8``); the 8200i SE family uses ``0x2000``.
 
 The table layout is the family one (:func:`~pyopticfilm.scan.calib_gl128.pack_shading_table`).
@@ -36,11 +37,14 @@ from pyopticfilm.scan.calib_gl128 import (
     pack_shading_table,
 )
 
-#: Visible and IR shading banks (bank 10 and bank 26, ``0x2000`` bytes each).
-AHB_SHADING_VISIBLE = 0x10014000
-AHB_SHADING_IR = 0x10034000
+#: Shading banks: bank 10 shades the first line of each pair (IR), bank 26
+#: the second (visible). In both 135i previews VueScan's final ``0x10014000``
+#: table carries unbalanced gains (median R/G/B 18515 / 25249 / 21385) that
+#: undo the IR line's cast, and ``0x10034000`` flat ones (~29400).
+AHB_SHADING_IR = 0x10014000
+AHB_SHADING_VISIBLE = 0x10034000
 #: Room between the two banks; one table may not be larger.
-SHADING_BANK_BYTES = AHB_SHADING_IR - AHB_SHADING_VISIBLE
+SHADING_BANK_BYTES = AHB_SHADING_VISIBLE - AHB_SHADING_IR
 
 #: Gain that leaves a pixel unchanged: VueScan's first shading upload on the
 #: 135i carries ``0x4000`` in every gain slot.
@@ -51,11 +55,11 @@ SHADING_GAIN_MIN = SHADING_GAIN_UNITY // 4
 SHADING_GAIN_MAX = 0xFFFF
 
 #: Sensor lines in the dark and white strips (``LINCNT = 256`` in both
-#: previews): 256 dark lines, or 128 visible + 128 IR lines in toggle mode.
+#: previews): 256 dark lines, or 128 IR + 128 visible lines in toggle mode.
 SHADING_LINES = 256
 
 #: AFE strip geometry: ``DPISET = 1200`` (one pixel per sensor unit in both
-#: timing sets), ``LINCNT = 2`` (one visible + one IR line).
+#: timing sets), ``LINCNT = 2`` (one IR + one visible line).
 AFE_DPISET = 1200
 AFE_STRIP_LINES = 2
 AFE_PROBE_PIXELS = 512
@@ -83,21 +87,23 @@ def strip_bytes(pixels: int, lines: int) -> int:
 def split_toggle_lines(raw: bytes | bytearray | memoryview, *, line_bytes: int, pairs: int) -> tuple[np.ndarray, np.ndarray]:
     """Visible and IR halves of ``pairs`` toggle-mode line pairs.
 
-    Every line pair is a visible line followed by an IR line of the same size.
-    Returns two flat, C-contiguous ``uint8`` arrays of ``pairs * line_bytes``
-    bytes each.
+    Every line pair is an IR line followed by a visible line of the same size.
+    In VueScan's whole two-line AFE probes, at gain 0 line 0 is neutral
+    (channel spread ~4 %) and line 1 carries the lamp's green cast (G/R ~1.25);
+    VueScan then sizes its gains to balance line 1. Returns two flat,
+    C-contiguous ``uint8`` arrays of ``pairs * line_bytes`` bytes each.
     """
     need = 2 * int(line_bytes) * int(pairs)
     if len(raw) < need:
         raise ValueError(f"toggle buffer too short: {len(raw)} < {need}")
     lines = np.frombuffer(raw, dtype=np.uint8, count=need).reshape(int(pairs), 2, int(line_bytes))
-    return np.ascontiguousarray(lines[:, 0]).reshape(-1), np.ascontiguousarray(lines[:, 1]).reshape(-1)
+    return np.ascontiguousarray(lines[:, 1]).reshape(-1), np.ascontiguousarray(lines[:, 0]).reshape(-1)
 
 
 def strip_column_means(
     raw: bytes, *, pixels: int, lines: int
 ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
-    """Per-column RGB means of the even (visible) and odd (IR) lines of a strip.
+    """Per-column RGB means of the odd (visible) and even (IR) lines of a strip.
 
     The dark strip runs with the toggle bit off, so both halves are dark; they
     still fill one bank each, as in the captures.
@@ -198,7 +204,7 @@ def validate_ir_white(white: Sequence[Sequence[int]]) -> tuple[bool, str]:
 
 
 def split_shading_blob(blob: bytes) -> tuple[bytes, bytes]:
-    """Visible and IR tables of a two-bank blob (:meth:`Gl128Loader.run_asic_shading`)."""
+    """IR and visible tables of a two-bank blob, in bank order (:meth:`Gl128Loader.run_asic_shading`)."""
     if not blob or len(blob) % 2:
         raise ValueError(f"two-bank shading blob must have an even, non-zero size (got {len(blob)})")
     half = len(blob) // 2
