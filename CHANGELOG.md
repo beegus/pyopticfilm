@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **GL845 900 dpi full-frame scans were sheared about 1 px per row into a diagonal X** (7600i v2; the 8200i shares the geometry). The full frame was 1287 px wide at 900 dpi, and an odd line width shears the image, as it did on the 8200i SE. The width is now made even: 1286 px, END 10544. 1800, 3600 and 7200 dpi are multiples of 16 already and are unchanged.
+  - **Hardware.** On a 7600i v2 at 900 dpi, each row's content lined up with the next row at ±1 px (the left of the frame +1, the right −1), and the holder edges crossed the frame as an X. The X showed after a cold boot, after a warm boot, and with auto exposure on or off. At 1286 px, rows line up at 0 px with auto exposure and with LPERIOD 14000, and the frame matches a 1800 dpi scan of the same film.
+
 ## [1.3.9] - 2026-11-03
 
 ### Added
